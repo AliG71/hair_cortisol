@@ -1,0 +1,1004 @@
+---
+title: "hair_cortisol_dog_combined_breed"
+author: "Alex German"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Check working directory
+```{r}
+getwd()
+```
+
+
+
+
+
+# Load packages
+```{r}
+library(readxl)
+library(psych)
+library(dlookr)
+library(vtable)
+library(dplyr)
+library(reshape)
+library(ggplot2)
+
+library(brms)
+library(rethinking)
+library(loo)
+library(priorsense)
+library(tidyverse)
+library(vioplot)
+library(bayesplot)
+library(bayestestR)
+```
+
+
+# Load data
+```{r}
+df <- read_xlsx("hair_cort_dog_all.xlsx", col_types = c("text", "text",  
+                               "text", "text", "text", "text",
+                               "text", "numeric","text", "skip",
+                               "numeric", "skip", "skip", 
+                               "numeric", "skip"))
+df <- as.data.frame(df)
+```
+
+
+
+# INITIAL DATA PLOTTING AND EXPLORATION
+
+## Check characteristics of df
+```{r}
+dim(df) # will tell you how many rows and columns the dataset has
+class(df) # will tell you what data structure has the dataset been assigned
+```
+
+
+## Explore the dataset to understand its structure.
+```{r}
+head(df)
+```
+
+
+# 1.  Get summary stats for numeric data
+```{r}
+numeric_df <- Filter(is.numeric, df)
+describe(numeric_df) # the describe function in psych provides summary stats
+```
+
+
+
+# 2. Check normality of all numeric variables
+## a. graphical assessment
+```{r}
+plot_normality(numeric_df)
+```
+
+
+## b. shapiro-wilk test
+```{r}
+apply(numeric_df, 2, shapiro.test)
+```
+
+
+## c. repeat Q-Q plots with transformed data
+### i. log(cortisol)
+```{r}
+qqnorm(df$cortisol)
+qqline(df$cortisol, col = "red")
+qqnorm(log(df$cortisol))
+qqline(log(df$cortisol), col = "red")
+```
+
+### ii Shapiro test for log cortisol
+```{r}
+shapiro.test(log(df$cortisol))
+```
+
+
+
+
+
+
+# Check data numerically
+```{r}
+summary(df$cortisol)
+summary(log(df$cortisol))
+```
+
+
+# a. Log-transform cortisol
+```{r}
+df$lgCort <- log(df$cortisol)
+summary(df$lgCort)
+```
+
+
+## i. Visualise
+```{r}
+hist(df$lgCort)
+```
+
+
+
+## b. Create simple category name for breed and convert to factor
+```{r}
+df$breed <- df$breed_group
+df$breed <- factor(df$breed, levels = c("mix", "ckcs", "pug", "ret", "other"))
+head(df$breed)
+```
+
+
+
+## c. Make light hair colour the reference category
+```{r}
+df$coat_colour <- factor(df$coat_colour, levels = c("light", "mix", "dark"), ordered = FALSE)
+head(df$coat_colour)
+```
+
+
+
+# 4. Generate data summary
+```{r}
+sumtable(df)
+```
+
+
+
+
+# 5. Visualise associations
+## a. Between lgCortisol and breed with a violin plot (vioplot package)
+```{r}
+par(mfrow = c(1,1))
+vioplot(lgCort ~ breed, col = "firebrick",
+        data = df)
+```
+
+
+## b. Between lgCortisol and breed with a stripchart
+```{r}
+stripchart(lgCort ~ breed, vertical = TRUE, method = "jitter",
+           col = "steelblue3", data = df, pch = 20)
+
+```
+
+
+
+
+## c. between lgCortisol and coat_colour with a violin plot (vioplot package)
+```{r}
+par(mfrow = c(1,1))
+vioplot(lgCort ~ coat_colour, col = "firebrick",
+        data = df)
+```
+
+
+## d. between lgCortisol and coat_colour with a stropchart
+```{r}
+stripchart(lgCort ~ coat_colour, vertical = TRUE, method = "jitter",
+           col = "steelblue3", data = df, pch = 20)
+
+```
+
+
+
+
+
+# STANDARDISE DATA FOR MODELLING
+
+## 1. Standardise cortisol
+```{r}
+df$slgCort <- standardize(df$lgC)
+summary(df$slgCort)
+```
+
+### a. visualise standardised lgCort
+```{r}
+hist(df$slgCort)
+```
+
+
+
+# 2. create dataset only containing complete data
+```{r}
+df2 <- na.omit(df)
+```
+
+
+
+# MODEL FOR THE EFFECT OF COUT COLOUR ON HAIR CORTISOL
+
+# 1. Model code
+model <- brm(slgCort ~ coat_colour + breed +  + (1 | visit),
+                   family = skew_normal(),
+                   data = df)
+
+Rationale... casual diagram implies that breed is a counfounder for the effect of hair colour on hair cortsol.  Therefore, need to include in the model.
+
+
+# 2. Check what priors need to be set
+```{r}
+default_prior(slgCort ~ coat_colour + breed +  + (1 | visit),
+                   family = skew_normal(),
+                   data = df)
+```
+
+### Published information about associations with hair cortisol
+
+1.  No published data about effects on breed, but this is plausible
+However, unclear as to which breeds will differ and which way.
+Therefore, use a regularising prior but keep it neutral and broad.
+
+2.  In one study, dogs with a light coat colour had greater log (hair cortisol) than those with a mix or dark colour. 
+Effect was small e.g. 0.070 (mix) or 0.075 (dark).
+There can justify a prior of that magnitideu, but keep general and regularising
+REF: Bowland.  Front. Vet. Sci. 7:565346.  doi: 10.3389/fvets.2020.565346
+
+
+
+# 3. Set priors
+```{r}
+# Set individual priors
+prior_int <- set_prior("normal(0, 0.5)", class = "Intercept")
+prior_sig <- set_prior("exponential(1)", class = "sigma")
+prior_b <- set_prior("normal(0, 1)", class = "b")
+prior_b_coat_m <- set_prior("normal(-0.070, 1)", class = "b", coef = "coat_colourmix")
+prior_b_coat_d <- set_prior("normal(-0.075, 1)", class = "b", coef = "coat_colourdark")
+prior_sd <- set_prior("normal(0, 1)", class = "sd")
+prior_alpha <- set_prior("normal(4, 2)", class = "alpha")
+
+# Combine priors into list
+priors <- c(prior_int, prior_sig, prior_b, prior_b_coat_m, prior_b_coat_d, prior_sd, prior_alpha)
+```
+
+
+# 4. Plot priors
+## a. Prior for intercept
+```{r}
+x <- seq(-3, 3, length.out = 100)
+y <- dnorm(x, mean = 0, sd = 0.5)
+plot(y ~ x, type = "l")
+```
+
+
+## b. Prior for sigma
+```{r}
+x <- seq(0, 3, length.out = 100)
+y <- dexp(x, rate = 1)
+plot(y ~ x, type = "l")
+```
+
+
+## b.ii. Alpha for skew normal distribution
+Based on distribution of log normal hair cortisol, expect things to be skewed to the right.  Try different levels of alpha for skew normal... and an alpha of 4 seems to be a good fit for the shape of the skew in the log hair cortisol for this dataset
+```{r}
+x <- seq(-3, 5, length.out = 100)
+y <- dskew_normal(x, mu = 0, sigma = 1, alpha = 4)
+plot(y ~ x, type = "l")
+```
+
+
+
+
+## c. Prior for coat_colour_mix beta
+```{r}
+x <- seq(-3, 3, length.out = 100)
+y <- dnorm(x, mean = -0.07, sd = 1)
+plot(y ~ x, type = "l")
+```
+
+
+
+## e. Prior for coat_colour_dark beta
+```{r}
+x <- seq(-3, 3, length.out = 100)
+y <- dnorm(x, mean = -0.075, sd = 1)
+plot(y ~ x, type = "l")
+```
+
+
+
+
+
+# 5. Run model
+Increased adapt_delta >0.8 (0.9 here), as had divergent transitions
+```{r}
+set.seed(666)
+model <- brm(slgCort ~ coat_colour + breed + (1 | visit),
+                   family = skew_normal(),
+                   prior = priors,
+                   data = df,
+                   control=list(adapt_delta=0.999, stepsize = 0.001, max_treedepth =15),
+                   iter = 8000, warmup = 2000,
+                   cores = 4,
+                   save_pars = save_pars(all =TRUE),
+                   sample_prior = TRUE)
+```
+
+
+## 6. Get summary of model
+```{r}
+summary(model)
+```
+
+
+# 7. MCMC diagnostics
+```{r}
+plot(model)
+```
+Looking for hairy caterpillars
+
+
+## b. try a trank plot as well
+```{r}
+mcmc_plot(model, type = 'rank_overlay')
+```
+
+
+
+
+# 8. Calculate 95% HPDI for coat_colour_mix
+Usually better than the compatability intervals given in the summary
+```{r}
+draws <- as.matrix(model)
+HPDI(draws[,2], 0.97)
+```
+
+
+# 9. Calculate 95% HPDI for coat_colour_dark
+Usually better than the compatability intervals given in the summary
+```{r}
+draws <- as.matrix(model)
+HPDI(draws[,3], 0.97) 
+```
+
+
+
+
+# 9. Calculate R2 for model
+```{r}
+bayes_R2(model, probs = c(0.015, 0.5, 0.985), robust = TRUE) # 0.015, 0.5, 0.985 are the quantiles
+loo_R2(model, probs = c(0.015, 0.5, 0.985)) # 0.015, 0.5, 0.985 are the quantiles
+```
+
+
+
+
+
+
+
+# CHECKS ON MODEL
+
+## 1. Basic check of simulations based on posterior distribution, versus the real data distribution
+checks whether actual data is similar to simulated data.
+```{r}
+pp_check(model, ndraws = 100) 
+```
+
+
+
+## 2. Check some individual draws versus observed using pp_check
+```{r}
+par(mfrow = c(1,1))
+pp_check(model, type = "hist", ndraws = 11, binwidth = 0.25) # separate histograms of 11 MCMC draws vs actual data
+```
+
+
+
+## 3. Other pp_check graphs
+```{r}
+pp_check(model, type = "error_hist", ndraws = 11) # separate histograms of errors for 11 draws
+pp_check(model, type = "scatter_avg", ndraws = 100) # scatter plot
+pp_check(model, type = "stat_2d") #  scatterplot of joint posteriors
+# PPC functions for predictive checks based on (approximate) leave-one-out (LOO) cross-validation
+pp_check(model, type = "loo_pit_overlay", ndraws = 1000) 
+```
+
+
+# 4. Error scatter average  plot (recommended by Buerkner)
+```{r}
+pp_check(model, type = "error_scatter_avg")
+```
+
+
+
+# 5. Pairs plot
+```{r}
+pairs(model)
+```
+
+
+
+# PSIS LOO-CV to check model performance
+```{r}
+loo_model <- loo(model, moment_match = TRUE)
+loo_model
+```
+
+
+
+
+# AUTOMATED PRIOR SENSITIVITY USING THE PRIOR SENSE PACKAGE
+  
+## 1. Sensitivity check
+First, check the sensitivity of the prior and likelihood to power-scaling. 
+Posterior and posteriors resulting from power-scaling.
+```{r}
+powerscale_sensitivity(model, variable = c("b_Intercept", "sigma", "b_breedckcs", "b_breedother", "b_breedpug", "b_breedret", "b_coat_colourmix", "b_coat_colourdark"))
+```
+
+## 2. Kernel density
+```{r}
+powerscale_plot_dens(model, variable = c("b_Intercept", "sigma", "b_breedckcs", "b_breedother", "b_breedpug", "b_breedret", "b_coat_colourmix", "b_coat_colourdark"), facet_rows = "variable")
+```
+
+
+# 3. Empirical cumulative distribution functions
+```{r}
+powerscale_plot_ecdf(model, variable = c("b_Intercept", "sigma", "b_breedckcs", "b_breedother", "b_breedpug", "b_breedret", "b_coat_colourmix", "b_coat_colourdark"), facet_rows = "variable")
+```
+
+
+# 4. Quantities
+```{r}
+powerscale_plot_quantities(model, variable = c("b_Intercept", "sigma", "b_breedckcs", "b_breedother", "b_breedpug", "b_breedret", "b_coat_colourmix", "b_coat_colourdark"), facet_rows = "variable")
+```
+
+# 5.  Now use bayestestR package to check priors are informative
+```{r}
+check_prior(model, effects = "all")
+```
+These values appear similar to what was set for the priors, so seems OK?
+
+
+
+
+# CHECK PRIOR PREDICTION LINES FROM FINAL MODEL
+
+# 1. Obtain draws of priors from final model
+```{r}
+prior <- prior_draws(model)
+prior %>% glimpse()
+```
+
+
+
+# 2. Plot prior prediction lines for coat_colour_mix with line plot
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_coat_colourmix * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "Breed",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-3, 3)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+# 3. Plot prior prediction lines for coat_colour_dark with line plot
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_coat_colourdark * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "Breed",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-3, 3)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+
+# CHECK PRIOR PREDICTIVE DISTRIBUTION
+
+# 1. Prior Predictive Distribution
+Can simulate data just on the priors.  Fit model but only consider prior when fitting model.
+If this looks reasonable, it helps to confirm that your priors were reasonable
+```{r}
+set.seed(666)
+model_priors_only <- brm(slgCort ~ coat_colour + breed + (1 | visit),
+                   family = skew_normal(),
+                   prior = priors,
+                   data = df,
+                   sample_prior = "only")
+```
+
+
+# 2. Check predictions against priors
+```{r}
+pp_check(model_priors_only, ndraws = 100)
+```
+
+
+
+# VARIANCE-COVARIANCE MATRIX
+
+```{r}
+as_draws_df(model) %>%
+  select(b_Intercept:sigma) %>%
+  cov() %>%
+  round(digits = 3)
+```
+
+
+
+
+# MANUAL POSTERIOR PREDICTIVE DISTRIBUTION CHECKS
+NB Uses posterior_predict
+
+## 1. Posterior predictive distribution plots for coat colour
+```{r}
+# use posterior predict to simulate predictions
+ppd <- posterior_predict(model) 
+
+par(mfrow = c(2,2))
+stripchart(slgCort ~ coat_colour, vertical = TRUE, method = "jitter",
+           col = "steelblue3", data = df, pch = 20, main = "Observed")
+stripchart(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ coat_colour, vertical = TRUE, method = "jitter",
+           col = "firebrick", data = df, pch = 20, main = "PPD")
+stripchart(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ coat_colour, vertical = TRUE, method = "jitter",
+           col = "firebrick", data = df, pch = 20, main = "PPD")
+stripchart(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ coat_colour, vertical = TRUE, method = "jitter",
+           col = "firebrick", data = df, pch = 20, main = "PPD")
+```
+
+
+
+
+
+
+## ANALYSING THE POSTERIOR DISTRIBUTION
+
+
+# 1a. Basic plot of conditional effects from model
+```{r}
+plot(conditional_effects(model), ask = FALSE)
+```
+
+### 1b. advanced plot of conditional effect of coat colour
+```{r}
+ce <- conditional_effects(model, effects = "coat_colour")
+ce_df <- ce[[1]][c(1, 7:10)]
+
+ggplot(ce_df, aes(x=coat_colour, y=estimate__, group=1)) +
+    geom_errorbar(width=.1, aes(ymin=lower__, ymax=upper__), colour=c("#F8766D", "#00BFC4","#7CAE00"), linewidth = 1) +
+    geom_point(shape=21, size=6, fill=c("#F8766D", "#00BFC4","#7CAE00")) +
+   theme_bw() +
+    labs(title = "Conditional effect of coat colour on hair cortisol") +
+         labs(y = paste0("Log Hair Cortisol (standardised)")) +
+         labs(x = paste0("Coat colour")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey25", size = 12),
+               axis.text.y = element_text(color = "grey50", size = 10))
+```
+
+
+
+
+
+# 2. mcmc_plot of model
+## a.just parameters of beta variables
+```{r}
+mcmc_plot(model,
+          variable = c("b_coat_colourmix", 
+                       "b_coat_colourdark",
+                       "b_breedckcs", 
+                       "b_breedother", 
+                       "b_breedpug", 
+                       "b_breedret"))
+```
+
+
+
+## b. just coat colour versus prior
+### i. distributional
+```{r}
+mcmc_plot(model,
+          variable = c("b_coat_colourmix", "prior_b_coat_colourmix",
+                       "b_coat_colourdark", "prior_b_coat_colourdark"))
+```
+
+
+###### 2. density
+```{r}
+mcmc_plot(model,
+          variable = c("b_coat_colourmix", "prior_b_coat_colourmix",
+                       "b_coat_colourdark", "prior_b_coat_colourdark"),
+          type = "areas") +
+
+   theme_classic() +
+    labs(title = "Prior vs posterior distribution for coat colour effect") +
+         labs(y = "") +
+         labs(x = paste0("Possible parameter values")) +
+    scale_y_discrete(labels=c("prior_b_coat_colourmix" = "Prior for mixed", "b_coat_colourmix" = "Posterior for mixed",
+                              "prior_b_coat_colourdark" = "Prior for dark", "b_coat_colourdark" = "Posterior for dark"),
+                     limits = c("prior_b_coat_colourmix", "b_coat_colourmix",
+                              "prior_b_coat_colourdark", "b_coat_colourdark")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+
+```
+
+
+
+
+## b. all parameters except alpha and sd_visit_Intercept
+```{r}
+mcmc_plot(model, 
+          variable = c("b_Intercept", "sigma",
+                       "b_coat_colourmix", 
+                       "b_coat_colourdark",
+                       "b_breedckcs", 
+                       "b_breedother", 
+                       "b_breedpug", 
+                       "b_breedret"))
+```
+
+
+# 3. Plot all posterior distributions exceot alpha and sd_visit_intercept
+```{r}
+posterior <- as.matrix(model)
+mcmc_areas(posterior,
+           pars = c("Intercept", "sigma",
+                   "b_coat_colourmix", 
+                       "b_coat_colourdark",
+                       "b_breedckcs", 
+                       "b_breedother", 
+                       "b_breedpug", 
+                       "b_breedret"),
+# arbitrary threshold for shading probability mass
+prob = 0.75)
+```
+
+
+## 4a. plot posterior distribution for all betas
+```{r}
+posterior <- as.matrix(model)
+mcmc_areas(posterior,
+           pars = c("b_coat_colourmix", 
+                       "b_coat_colourdark",
+                       "b_breedckcs", 
+                       "b_breedother", 
+                       "b_breedpug", 
+                       "b_breedret"),
+    prob = 0.75) # arbitrary threshold for shading probability mass
+```
+
+
+# 4b.  Plot posterior distributions for coat colour only
+```{r}
+posterior <- as.matrix(model)
+mcmc_areas(posterior,
+pars = c("b_coat_colourmix", 
+         "b_coat_colourdark"),
+# arbitrary threshold for shading probability mass
+prob = 0.97) +
+  
+   theme_classic() +
+     labs(title = "Posterior distribution for coat colour effect", 
+         y = "Density distribution", 
+         x = "Possible parameter values") +
+     scale_y_discrete(labels=c("b_coat_colourmix" = "Mixed",
+                              "b_coat_colourdark" = "Dark")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+```
+
+
+
+
+## 5. Describe the posterior visually
+```{r}
+# Focus on describing posterior
+hdi_range <- hdi(model, ci = c(0.65, 0.70, 0.80, 0.89, 0.95))
+plot(hdi_range, show_intercept = T)
+```
+
+
+### just coat colour
+```{r}
+# Focus on describing posterior
+hdi_range <- hdi(model, ci = c(0.65, 0.70, 0.80, 0.89, 0.95),
+                 parameters = c("b_coat_colourmix", 
+         "b_coat_colourdark"))
+plot(hdi_range, show_intercept = T) +
+
+    labs(title = "Posterior distribution for coat colour effect") +
+         labs(y = "Density distribution") +
+         labs(x = "Possible parameter values") +
+     scale_y_discrete(labels=c("b_coat_colourmix" = "Mixed",
+                              "b_coat_colourdark" = "Dark"),
+                      limits = c("b_coat_colourmix", "b_coat_colourdark")) +
+           theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+```
+
+
+
+# HYPOTHESIS TESTS
+## 1. light vs. mix (from draws) is >0
+```{r}
+draws <- as.matrix(model)
+mean(draws[,2] <0)
+mean(draws[,2] >0)
+```
+
+### Check 97% credible interval of with HPDI for light vs, mix from draws 
+```{r}
+HPDI(draws[,2], prob=0.97)
+```
+
+
+
+## 2. light vs. dark (from draws) is >0
+```{r}
+draws <- as.matrix(model)
+mean(draws[,3] <0)
+mean(draws[,3] >0)
+```
+
+### Check 97% credible interval of with HPDI for light vs. dark from draws 
+```{r}
+HPDI(draws[,3], prob=0.97)
+```
+
+
+
+
+## 3. Visualising the posterior of a model using numerical and graphical methods
+### a. basic (one dog only)
+```{r}
+# create new dataframe which contains results of the first dog
+new_data <- rbind(df[1,], df[1,], df[1,])
+# Now change one category to be different
+new_data$coat_colour <- c("light", "dark", "mix")
+# Visualise df to make sure it has worked
+new_data
+
+# Now get mean predictions from the draws of the model
+pred_means <- posterior_predict(model, newdata = new_data)
+
+# Compare difference in means for coat colours vs light
+differenceLM <- pred_means[,1] - pred_means[,2]
+differenceDM <- pred_means[,1] - pred_means[,3]
+
+
+par(mfrow = c(2,2))
+
+# Examine mean of difference
+mean(differenceLM)
+# View histogram of this
+hist(differenceLM)
+# Create HPDI
+HPDI(differenceLM, 0.93)
+
+# Examine mean of difference
+mean(differenceDM)
+# View histogram of this
+hist(differenceDM)
+# Create HPDI
+HPDI(differenceDM, 0.93)
+```
+
+
+### b.advanced (all dogs)
+#### i. light vs mix
+```{r}
+# create new dataframe which contains results of all dogs
+new_data1 <- df
+# Now change one category to be different
+new_data1$coat_colour <- c("light")
+
+# create new dataframe which contains results of the all dopgs
+new_data2 <- df
+# Now change one category to be different
+new_data1$coat_colour <- c("mix")
+
+# Now get predictions from the draws of the models
+pred_nd1 <- posterior_predict(model, newdata = new_data1)
+pred_nd2 <- posterior_predict(model, newdata = new_data2)
+pred_diff <- pred_nd1 - pred_nd2
+pred_diff <- data.frame(pred_diff)
+
+# Create mean of differences for each column (dog) of the dataframe
+pred_diff_LM <- apply(pred_diff, 2, mean)
+# View histogram of mean differences
+hist(pred_diff_LM)
+
+# Examine mean of difference
+mean(pred_diff_LM)
+# View histogram of this
+
+HPDI(pred_diff_LM, 0.97)
+```
+
+
+#### i. light vs dark
+```{r}
+# create new dataframe which contains results of the first dog
+new_data2 <- df
+# Now change one category to be different
+new_data2$coat_colour <- c("dark")
+
+# Now get predictions from the draws of the models
+pred_nd1 <- posterior_predict(model, newdata = new_data1)
+pred_nd2 <- posterior_predict(model, newdata = new_data2)
+pred_diff <- pred_nd1 - pred_nd2
+pred_diff <- data.frame(pred_diff)
+
+# Create mean of differences for each column (dog) of the dataframe
+pred_diff_DM <- apply(pred_diff, 2, mean)
+# View histogram of mean differences
+hist(pred_diff_DM)
+
+# Examine mean of difference
+mean(pred_diff_DM)
+# View histogram of this
+HPDI(pred_diff_DM, 0.97)
+```
+
+
+
+
+## 6. plot the counterfactual effect of "do sex" on slgCort
+### a. plot estimates and 95% credible intervals 
+```{r}
+set.seed(666)
+nd <- tibble(visit = 'v0', coat_colour = c("light", "dark", "mix"), breed = "mix")
+
+p1 <-
+  predict(model,
+          resp = "slgCort",
+          newdata = nd) %>% 
+  data.frame() %>% 
+  bind_cols(nd) %>% 
+  
+  ggplot(aes(x = coat_colour, y = Estimate, ymin = Q2.5, ymax = Q97.5)) +
+  
+  geom_linerange(aes(ymin = Q2.5, ymax = Q97.5),
+                 linewidth = 1, color = "#F8766D", alpha = 3/5) +
+  geom_point(size = 5, color = "#F8766D") +
+
+   theme_bw() +
+    labs(title = "Predicted effect of coat colour on hair cortisol") +
+         labs(y = paste0("Log hair cortisol (standardised)")) +
+         labs(x = paste0("Coat colour")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5)) +
+         coord_cartesian(ylim = c(-2.5, 2.5))
+
+plot(p1)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 5. Make predictions of log cortisol for each dog and compare with actual data
+```{r}
+pred_slgCort <- posterior_epred(model)
+av_pred_slgCort <- colMeans(pred_slgCort)
+plot(av_pred_slgCort ~ df$slgCort)
+```
+
+
+
+
+
+# Check if better fit if you allow SD to vary across coat colour
+
+## 1. Set priors
+```{r}
+# Set individual priors
+prior_int <- set_prior("normal(0, 1.0)", class = "Intercept")
+prior_b <- set_prior("normal(0, 1)", class = "b")
+prior_b_coat_m <- set_prior("normal(-0.070, 1)", class = "b", coef = "coat_colourmix")
+prior_b_coat_d <- set_prior("normal(-0.075, 1)", class = "b", coef = "coat_colourdark")
+prior_sd <- set_prior("normal(0, 1)", class = "sd")
+prior_alpha <- set_prior("normal(4, 2)", class = "alpha")
+
+# Combine priors into list
+priors2 <- c(prior_int, prior_b, prior_b_coat_m, prior_b_coat_d, prior_sd, prior_alpha)
+```
+
+
+
+
+
+## 2. Run model 2
+Increased adapt_delta >0.8 (0.9 here), as had divergent transitions
+```{r}
+set.seed(666)
+model2 <- brm(bf(slgCort ~ coat_colour + breed + (1 | visit),
+                 sigma ~ coat_colour),
+                   family = skew_normal(),
+                   prior = priors2,
+                   data = df,
+                   control=list(adapt_delta=0.999, stepsize = 0.001, max_treedepth =15),
+                   iter = 8000, warmup = 2000,
+                   cores = 4,
+                   save_pars = save_pars(all =TRUE),
+                   sample_prior = TRUE)
+```
+
+
+## 3. get summary of model
+```{r}
+summary(model2)
+```
+
+
+
+
+## 4. Try the PSIS LOO-CV procedure to check model performance
+```{r}
+loo_model2 <- loo(model2, moment_match = TRUE)
+loo_model2
+```
+
+
+## 5. Compare looic for models 1 and 2
+```{r}
+model <- add_criterion(model, "loo")
+model2 <- add_criterion(model2, "loo")
+loo_compare(model, model2)
+```
+Model 1 is a better fit so keep this
+
+
+
+
+
+

@@ -1,0 +1,2068 @@
+---
+title: "hair_cortisol_dog_combined"
+author: "Alex German"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Check working directory
+```{r}
+getwd()
+```
+
+
+
+
+
+# Load packages
+```{r}
+library(readxl)
+library(psych)
+library(dlookr)
+library(vtable)
+library(dplyr)
+library(reshape)
+library(ggplot2)
+
+library(brms)
+library(rethinking)
+library(loo)
+library(priorsense)
+library(tidyverse)
+library(vioplot)
+library(bayesplot)
+library(bayestestR)
+```
+
+
+# Load data
+```{r}
+df <- read_xlsx("hair_cort_dog_all.xlsx", col_types = c("text", "text",  
+                               "text", "text", "text", "text",
+                               "text", "numeric","text", "skip",
+                               "numeric", "skip", "skip", 
+                               "numeric", "skip"))
+df <- as.data.frame(df)
+```
+
+
+
+# INITIAL DATA PLOTTING AND EXPLORATION
+
+## Check characteristics of df
+```{r}
+dim(df) # will tell you how many rows and columns the dataset has
+class(df) # will tell you what data structure has the dataset been assigned
+```
+
+
+## Explore the dataset to understand its structure.
+```{r}
+head(df)
+```
+
+
+# 1.  Get summary stats for numeric data ####
+```{r}
+numeric_df <- Filter(is.numeric, df)
+describe(numeric_df) # the describe function in psych provides summary stats
+```
+
+
+
+# 2. Check normality of all numeric variables
+## a. graphical assessment
+```{r}
+plot_normality(numeric_df)
+```
+
+
+## b. shapiro-wilk test
+```{r}
+apply(numeric_df, 2, shapiro.test)
+```
+
+
+## c. repeat Q-Q plots with transformed data
+### i. log(cortisol)
+```{r}
+qqnorm(df$cortisol)
+qqline(df$cortisol, col = "red")
+qqnorm(log(df$cortisol))
+qqline(log(df$cortisol), col = "red")
+```
+
+### ii Shapiro test for log cortisol
+```{r}
+shapiro.test(log(df$cortisol))
+```
+
+
+
+
+
+
+# 3. Check data numerically
+```{r}
+summary(df$cortisol)
+summary(log(df$cortisol))
+```
+
+
+## a. log-transform cortisol
+```{r}
+df$lgCort <- log(df$cortisol)
+summary(df$lgCort)
+```
+
+
+### i. visualise
+```{r}
+hist(df$lgCort)
+```
+
+
+
+## b. Create simple category name for breed and convert to factor
+```{r}
+df$breed <- df$breed_group
+df$breed <- factor(df$breed, levels = c("mix", "ckcs", "pug", "ret", "other"))
+head(df$breed)
+```
+
+
+
+## c. Make light hair colour the reference category
+```{r}
+df$coat_colour <- factor(df$coat_colour, levels = c("light", "mix", "dark"), ordered = FALSE)
+head(df$coat_colour)
+```
+
+
+
+# 4. Generate data summary
+```{r}
+sumtable(df)
+```
+
+## only stopped data
+```{r}
+df_stopped <- df[df$group == "stopped", ]
+sumtable(df_stopped, add.median = TRUE)
+```
+
+
+## only completed data
+```{r}
+df_completed <- df[df$group == "completed", ]
+df_compv0 <- df_completed[df_completed$visit == "v0", ]
+df_compv1 <- df_completed[df_completed$visit == "v1", ]
+sumtable(df_compv0, add.median = TRUE)
+sumtable(df_compv1, add.median = TRUE)
+```
+
+
+```{r}
+## three way cross tabs (xtabs) and flatten the table
+ftable(xtabs(~ visit + group, data = df))
+```
+
+
+
+
+# 5. Visualise associations
+## a. Between Cortisol and sex with a violin plot (vioplot package)
+```{r}
+par(mfrow = c(1,1))
+vioplot(cortisol ~ sex, col = "firebrick",
+        data = df)
+```
+
+
+## b. Between lgCortisol and sex with a violin plot (vioplot package)
+```{r}
+par(mfrow = c(1,1))
+vioplot(lgCort ~ sex, col = "lemonchiffon",
+        data = df)
+```
+
+
+## c. Between lgCortisol and breed
+### i. with a violin plot (vioplot package)
+```{r}
+par(mfrow = c(1,1))
+vioplot(lgCort ~ breed, col = "firebrick",
+        data = df)
+```
+
+
+### ii. with stripchart
+```{r}
+stripchart(lgCort ~ breed, vertical = TRUE, method = "jitter",
+           col = "steelblue3", data = df, pch = 20)
+
+```
+
+
+## d. Between Cortisol and comorbidity with a violin plot (vioplot package)
+```{r}
+par(mfrow = c(1,1))
+vioplot(cortisol ~ comorbidity, col = "steelblue",
+        data = df)
+```
+
+
+## e. Between log(cortisol) and comorbidity with a violin plot (vioplot package)
+```{r}
+par(mfrow = c(1,1))
+vioplot(lgCort ~ comorbidity, col = "steelblue",
+        data = df)
+```
+
+
+## f. Between cortisol and age with a dotplot
+```{r}
+plot(cortisol ~ age, col = "steelblue3", data = df, pch = 20)
+```
+
+
+## g. Between log(cortisol) and age with a dotplot
+```{r}
+plot(lgCort ~ age, col = "steelblue3", data = df, pch = 20)
+```
+
+
+## h. Between cortisol and body fat with a dotplot
+```{r}
+plot(cortisol ~ fat_percent, col = "steelblue3", data = df, pch = 20)
+```
+
+
+## h. Between log(cortisol) and body fat with a dotplot
+```{r}
+plot(lgCort ~ fat_percent, col = "steelblue3", data = df, pch = 20)
+corr.test(df$lgCort, df$fat_percent)
+```
+
+
+
+
+
+# STANDARDISE DATA FOR MODELLING
+
+## 1. Standardise body fat
+```{r}
+df$sFat <- standardize(df$fat_percent)
+summary(df$sFat)
+```
+
+### a. visualise standardised lgCort
+```{r}
+hist(df$sFat)
+```
+
+
+
+## 2. Standardise Age
+```{r}
+df$sAge <- standardize(df$age)
+summary(df$sAge)
+```
+
+
+## 3. Standardise lg(cortisol)
+```{r}
+df$slgCort <- standardize(df$lgC)
+summary(df$slgCort)
+```
+
+
+### a. visualise standardised lgCort
+```{r}
+hist(df$slgCort, breaks =20, col = "steelblue3", main = "(a) Histogram of observed log hair cortisol", xlab = "Log hair cortisol (standardised)", xlim = c(-2, 3))
+```
+
+
+
+
+### b.Recreate using a skew-normal distribution
+```{r}
+x <- seq(-2, 4, length.out = 100)
+y <- dskew_normal(x, mu = 0, sigma = 1, alpha = 4)
+plot(y ~ x, type = "l", main = "(b) Skew-normal distribution with alpha of 4", ylab = "Density", xlab = "Log hair cortisol (standardised)", xlim = c(-2, 3), lwd = 2, col = "steelblue3")
+```
+
+
+### c. Plot the visualisations side by side 
+```{r}
+par(mfrow = c(1,2))
+hist(df$slgCort, breaks =20, col = "steelblue3", main = "(a) Log hair cortisol (observed)", xlab = "Log hair cortisol (standardised)", xlim = c(-2, 3))
+x <- seq(-2, 4, length.out = 100)
+y <- dskew_normal(x, mu = 0, sigma = 1, alpha = 4)
+plot(y ~ x, type = "l", main = "(b) Skew-normal distribution (alpha=4)", ylab = "Density", xlab = "Log hair cortisol (standardised)", xlim = c(-2, 3), lwd = 2, col = "steelblue3")
+```
+
+
+### c. Plot the visualisations with skew-normal overlaid on histogram
+```{r}
+par(mfrow = c(1,1))
+# prepare histogram data
+hist_data <- df$slgCort
+
+# Prepare skew-normal curve dats
+x <- seq(-3, 3, length.out = 100)
+y <- dskew_normal(x, mu = 0, sigma = 1, alpha = 4)
+
+# Histogram
+hist(hist_data, prob = TRUE, col = "steelblue2", breaks = 20,
+     ylim = c(0, 0.8), # Adjust y-axis limits to fit the data
+     xlim = c(-3, 3),
+     main =  "Observed hair cortisol vs skew-normal", 
+     xlab = "Log hair cortisol (standardised)",
+     ylab = "Density",
+     font.lab = 2)
+
+# Add skew-normal curve
+lines(x, y, col = "firebrick3", lwd = 3)
+
+# Add normal distribution for comparison
+lines(x, dnorm(x, mean = 0, sd = 1), col = "darkblue", lwd = 2, lty = 2)
+```
+
+
+
+### Create plot to show prior for body fat
+```{r}
+x <- seq(-3, 3, length.out = 100)
+y <- dnorm(x, mean = 0, sd = 0.5)
+plot(y ~ x, type = "l",
+     col = "steelblue3", lwd = 3,
+      main =  "Prior for the effect of body fat on log hair cortisol", 
+     xlab = "Prior probability distribution",
+     ylab = "Density",
+     font.lab = 2)
+abline(v = 0, lwd = 0.5)
+abline(v = 0, col = "firebrick3", lty = 2, lwd = 2)
+```
+
+
+
+## 2. create dataset only containing complete data
+```{r}
+df2 <- na.omit(df)
+```
+
+
+
+# MODEL FOR THE EFFECT OF BODY FAT ON HAIR CORTISOL
+
+##  1. Model code
+model <- brm(slgCort ~ sFat + sAge + breed + sex + comorbidity + (1 | visit),
+                   family = skew_normal(),
+                   data = df2)
+
+
+
+## 2. Check what priors need to be set
+```{r}
+default_prior(slgCort ~ sFat + sAge + breed + sex + comorbidity + (1 | visit),
+                   family = skew_normal(),
+                   data = df2)
+```
+
+
+
+
+
+
+
+### Published information about associations with hair cortisol
+#### 1. body fat effect
+1.  Log(hair_cort) greater in humans with obesity (logHC = 0.983) cf normal weight (logHC = 0.862) and overweight (0.904)
+Ref: Obesity (2017) 25, 539-544. doi:10.1002/oby.21733
+```{r}
+exp(0.983) # obese
+exp(0.862) # normal
+exp(0.904) # overweight
+```
+Change from normal to obese = 2.37 to 2.67, so only ~10% increase across the range.
+Prior allowing beta increase of 0.1 per SD increase of BF would work,meaning that we expect change to be between -0.1 and +0.3
+Include regularising function to improve efficiency
+
+
+Change in cortisol when slgCort increases from mean (0) by 0.1 X 1 SD
+~10% increase in cortisol for ~10% increase in fat
+```{r}
+mlgC <- mean(df2$lgCort)
+sdlgC <- sd(df2$lgCort)
+exp(mlgC)
+exp(mlgC + 0.1 * sdlgC)
+```
+
+Change in fat when increases from mean by 1 SD
+10% increase in fat
+```{r}
+mF <- mean(df2$fat_percent)
+sdF <- sd(df2$fat_percent)
+mF
+mF + sdF
+```
+Suggests that a 10% increase in fat would be associated with a 10% increase in mean cortisol
+
+
+Against this evidence in dogs, BCS had negative impact on log hair cortisol... albeit for dogs with BCS 1-6.  
+
+NB Bowland found no age effect.  They also found a negative effect of BCS on log hair cortisol (beta -0.03).  However, BCS ranged from 1-6 (with only 1 BCS 6), so few overweight.... could suggest poor nutrition and health cf obesity.  (Bowland JB.  Front. Vet. Sci 2020; 7:565346.  doi: 10.3389/fvets.2020.565346)
+
+Nonetheless, safer to use a neutral regularising prior.
+
+
+
+
+#### 2. comorbidity effect
+1.  hair_cort is greater in dogs with atopy vs control
+Ref: Vet Dermatol 2023 Aug;34(4):339-347.  doi: 10.1111/vde.13151.  
+hair cortisol before treatment: 0.605
+hair cortisol after treatment: 0.25
+treatment leads to ~50% reduction
+
+2.  hair_cort greater when dogs are stressed (shelter dogs)
+Ref: Scientific Reports | (2022) 12:5117 | https://doi.org/10.1038/s41598-022-09140-w
+t0 16.0 +/- 6.8
+t1 21.8 +/- 9.4
+Average increase = 30-40%
+
+3.  hair_cort greater when behavioural stress (competition) and seasonal affect (but variable)
+Ref: Scientific Reports | 6:19631 | DOI: 10.1038/srep19631
+Greater cortisol in January, although only in competing dogs.
+Cortisol > in competing cf companion and working 40 pg/mg vs 10-20, so approx double.
+
+
+4.  hair_cort greater when behavioural stress (agility)
+Ref: PLOS ONE | https://doi.org/10.1371/journal.pone.0216000 
+yes 0.26 (0.17-0.35)
+not 0.15 (0.10-0.27)
+Average increase = 50%
+
+Overall, as not exactly the same as effect of various diseases, set a modest (and regularising) prior... 20% increase in cortisol (0.2 SD) for presence of comorbidity
+
+
+
+#### 3. sex effect
+In humans, males have > hair cortisol cf females (Binz TM.  ForensicSciInt 2018; 284:33–8. doi: 10.1016/j.forsciint.2017.12.032)
+...but effect is opposite in vervet monlkys (Laudenslager ML.  Psychoneuroendocrinology 2012; 37:1736–9. doi: 10.1016/j.psyneuen.2012.03.015).
+... no effect of sex in a previous dog study (Macbeth BJ.  Wildl Soc Bull 2012; 36:747–58. doi: 10.1002/wsb.219)
+... however, this study did find that neutered dogs had decreased hair cortisol.
+... as all dogs in the study were neutered, this means that an effect of sex is less likely.
+Bowland et al, female dogs had > hair cortisol than male dogs, but all dogs were intact (Bowland JB.  Front. Vet. Sci 2020; 7:565346.  doi: 10.3389/fvets.2020.565346)
+
+Further, this effect was lost when accounting for other effects.
+
+Therefore, use a regularising prior but keep it neutral and broad, to allow the effect to be either way.
+
+
+
+NB Bowland found no age effect.  They also found a negative effect of BCS on log hair cortisol (beta -0.03).  However, BCS ranged from 1-6 (with only 1 BCS 6), so few overweight.... could suggest poor nutrition and health cf obesity.  (Bowland JB.  Front. Vet. Sci 2020; 7:565346.  doi: 10.3389/fvets.2020.565346)
+
+
+#### breed effect
+No published data about effects of breed on hair cortisol, but this is plausible
+However, unclear as to which breeds will differ and which way.
+Therefore, use a regularising prior but keep it neutral and broad.
+
+
+# 3. Set priors
+```{r}
+# Set individual priors
+prior_int <- set_prior("normal(0, 0.5)", class = "Intercept")
+prior_b <- set_prior("normal(0, 1)", class = "b") # betas for breed
+prior_b_sex <- set_prior("normal(0, 1)", class = "b", coef = "sexMale")
+prior_b_co <- set_prior("normal(0.25, 1)", class = "b", coef = "comorbidityyes")
+prior_b_f <- set_prior("normal(0, 0.5)", class = "b", coef = "sFat")
+prior_b_sAge <- set_prior("normal(0, 0.5)", class = "b", coef = "sAge")
+prior_sd <- set_prior("normal(0, 1)", class = "sd")
+prior_alpha <- set_prior("normal(4, 2)", class = "alpha")
+
+# Combine priors into list
+priors <- c(prior_int, prior_b, prior_b_sex, prior_b_co, prior_b_f, prior_b_sAge, prior_sd, prior_alpha)
+```
+NB, as we have comorbidity in the nodek, we allowing sigma to vary across comorbidity.
+
+# 4. Plot priors
+## a. Prior for intercept
+```{r}
+par(mfrow = c(1,1))
+x <- seq(-3, 3, length.out = 100)
+y <- dnorm(x, mean = 0, sd = 0.5)
+plot(y ~ x, type = "l")
+```
+
+
+## b. Prior for sigma
+```{r}
+x <- seq(0, 3, length.out = 100)
+y <- dexp(x, rate = 1)
+plot(y ~ x, type = "l")
+```
+
+
+## b.ii. deciding on alpha for skew normal distribution
+Based on distribution of log normal hair cortisol, expect things to be skewed to the right.  Try different levels of alpha for skew normal.  
+```{r}
+x <- seq(-2, 4, length.out = 100)
+y <- dskew_normal(x, mu = 0, sigma = 1, alpha = 4)
+plot(y ~ x, type = "l")
+```
+
+Given we have a right skew, alpha needs to be positive and 4 appears to reflect the skew seen in the data... keep sd briad (eg 2) broad to allow some flexibility
+
+
+
+
+## biii. Prior for visit sd
+```{r}
+x <- seq(0, 5, length.out = 100)
+y <- dnorm(x, mean = 0, sd = 1)
+plot(y ~ x, type = "l")
+```
+
+
+
+
+## c. Prior for breed
+```{r}
+x <- seq(-3, 3, length.out = 100)
+y <- dnorm(x, mean = 0, sd = 1.0)
+plot(y ~ x, type = "l")
+```
+
+
+## d. Prior for beta of body fat
+```{r}
+x <- seq(-3, 3, length.out = 100)
+y <- dnorm(x, mean = 0, sd = 0.5)
+plot(y ~ x, type = "l")
+```
+
+## e. Prior for beta of comorbidity
+```{r}
+x <- seq(-3, 3, length.out = 100)
+y <- dnorm(x, mean = 0.25, sd =1)
+plot(y ~ x, type = "l", col = "steelblue3", lwd = 3,
+     main = "Prior for comorbidity effect on log hair cortisol",
+     xlab = "Prior probability distribution",
+     ylab = "Density",
+     font.lab = 2)
+abline(v = 0, lwd = 0.5)
+abline(v = 0.25, col = "firebrick3", lty = 2, lwd = 2)
+```
+
+## c. Prior for sex
+```{r}
+x <- seq(-3, 3, length.out = 100)
+y <- dnorm(x, mean = 0, sd = 1)
+plot(y ~ x, type = "l")
+```
+
+
+
+
+
+# 5. Run model
+Increased adapt_delta >0.8 (0.9999 here), as had divergent transitions
+```{r}
+set.seed(666)
+model <- brm(bf(slgCort ~ sFat + sAge + breed + sex + comorbidity + (1 | visit),
+                   sigma ~ comorbidity),
+                   family = skew_normal(),
+                   prior = priors,
+                   data = df2,
+                   control=list(adapt_delta=0.999999, stepsize = 0.001, max_treedepth =15),
+                   iter = 8000, warmup = 2000,
+                   cores = 4,
+                   save_pars = save_pars(all =TRUE),
+                   sample_prior = TRUE)
+```
+
+
+## 6. Get summary of model
+```{r}
+summary(model)
+```
+
+
+# 7. MCMC diagnostics
+## a. check distributions and trace plots
+```{r}
+color_scheme_set("blue")
+plot(model)
+```
+Looking for hairy caterpillars
+
+
+## b. try a trank plot as well
+```{r}
+mcmc_plot(model, type = 'rank_overlay')
+```
+
+
+## c. trace plot of body_fat only for figure using bayesplot package
+### i. first create array of posteriors for plotting
+```{r}
+posterior <- as.array(model)
+dimnames(posterior)
+```
+
+### ii create violin plot
+```{r}
+mcmc_violin(posterior, pars = "b_sFat")
+```
+
+
+### iii mcmc_pairs plot using bayesplot
+```{r}
+color_scheme_set("viridis")
+mcmc_trace(posterior, pars = "b_sFat") +
+  
+     theme_classic() +
+     labs(title = "Trace plot for beta of standardised fat", 
+         y = "b_sFat", 
+         x = "Rank") +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+```
+
+```{r}
+mcmc_plot(model, type = 'rank_overlay', variable = "b_sFat") +
+
+   theme_classic() +
+     labs(title = "Trace rank plot for beta of standardised fat", 
+         y = "b_sFat", 
+         x = "Rank") +
+         ylim(250, 350) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+```
+
+
+
+
+
+# 8. Calculate 97% HPDI for fat
+Usually better than the compatoability intervals given in the summary
+```{r}
+draws <- as.matrix(model)
+HPDI(draws[,3], 0.97) # 1st column is draws for bf
+```
+
+
+# 9. Calculate R2 for model
+```{r}
+bayes_R2(model, probs = c(0.015, 0.5, 0.985)) # 0.015, 0.5, 0.985 are the quantiles
+loo_R2(model, probs = c(0.015, 0.5, 0.985)) # 0.015, 0.5, 0.985 are the quantiles
+```
+
+
+
+
+# CHECKS ON MODEL
+
+## 1. Basic check of simulations based on posterior distribution, versus the real data distribution
+checks whether actual data is similar to simulated data.
+### a. standard
+```{r}
+color_scheme_set("blue")
+pp_check(model, ndraws = 100) +
+
+   theme_classic() +
+  labs(title = "Posterior predictions of body fat model (skew-normal)", 
+         y = "Density", 
+         x = "Log hair cortisol (standardised") +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12), ,
+               legend.position = "inside", legend.position.inside = c(0.91, 0.83))
+```
+
+
+### a. altered axes for comparison
+```{r}
+color_scheme_set("blue")
+pp_check(model, ndraws = 100) +
+
+   theme_classic() +
+  labs(title = "Posterior predictions of body fat model (skew-normal)", 
+         y = "Density", 
+         x = "Log hair cortisol (standardised") +
+  xlim(-5, 7) +  
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12), ,
+               legend.position = "inside", legend.position.inside = c(0.91, 0.83))
+```
+
+
+
+
+## 2. Check some individual draws versus observed using pp_check
+```{r}
+par(mfrow = c(1,1))
+pp_check(model, type = "hist", ndraws = 11, binwidth = 0.25) # separate histograms of 11 MCMC draws vs actual data
+```
+
+
+
+## 3. Other pp_check graphs
+### a. all
+```{r}
+pp_check(model, type = "error_hist", ndraws = 11) # separate histograms of errors for 11 draws
+pp_check(model, type = "scatter_avg", ndraws = 100) # scatter plot
+pp_check(model, type = "stat_2d") #  scatterplot of joint posteriors
+# PPC functions for predictive checks based on (approximate) leave-one-out (LOO) cross-validation
+pp_check(model, type = "loo_pit_overlay", ndraws = 1000) 
+```
+
+### b. for figure 
+#### i.
+```{r}
+# separate histograms of 11 MCMC draws vs actual data
+pp_check(model, type = "hist", ndraws = 11, binwidth = 0.25)  +
+
+   theme_classic() +
+     labs(title = "Actual data vs 11 MCMC draws for body fat model") +
+
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+```
+
+
+#### ii.
+```{r}
+#  scatterplot of joint posteriors
+pp_check(model, type = "stat_2d")  +
+
+   theme_classic() +
+     labs(title = "Scatterplot of joint posteriors for body fat model") +
+
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12), ,
+               legend.position = "inside", legend.position.inside = c(0.91, 0.13))
+```
+
+
+
+
+
+
+```{r}
+pp_check(model, type = "loo_pit_overlay", ndraws = 1000) +
+
+   theme_classic() +
+     labs(title = "'LOO PIT overlay' plot for body fat model") +
+
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12),
+               legend.position = "inside", legend.position.inside = c(0.91, 0.13))
+```
+
+
+
+
+# 4. Error scatter average  plot (recommended by Buerkner)
+```{r}
+pp_check(model, type = "error_scatter_avg")
+```
+
+
+
+# 5. Pairs plot
+```{r}
+color_scheme_set("blue")
+pairs(model, regex = TRUE)
+```
+
+
+```{r}
+color_scheme_set("pink")
+mcmc_pairs(posterior,
+           pars = c("Intercept", "Intercept_sigma",
+                    "alpha", 
+                    "b_sFat", "b_sAge",
+                    "b_sexMale",
+                    "b_comorbidityyes", "b_sigma_comorbidityyes"),
+           off_diag_args = list(size = 0.5))
+```
+
+
+
+```{r}
+color_scheme_set("pink")
+mcmc_pairs(posterior,
+           pars = c("Intercept", "Intercept_sigma",
+                    "alpha", 
+                    "b_breedckcs", "b_breedpug",
+                    "b_breedret", "b_breedother"),
+                      off_diag_args = list(size = 0.5))
+
+```
+
+# PSIS LOO-CV to check model performance
+```{r}
+loo_model <- loo(model, moment_match = TRUE)
+loo_model
+```
+
+
+
+
+
+# AUTOMATED PRIOR SENSITIVITY USING THE PRIOR SENSE PACKAGE
+
+## 1. Sensitivity check
+First, check the sensitivity of the prior and likelihood to power-scaling. 
+Posterior and posteriors resulting from power-scaling.
+```{r}
+color_scheme_set("blue")
+powerscale_sensitivity(model, variable = c("b_Intercept",
+                                           "b_sFat",
+                                           "b_sAge",
+                                           "b_breedckcs", "b_breedother", "b_breedpug", "b_breedret",
+                                           "b_sexMale",
+                                           "b_comorbidityyes"))
+```
+
+
+## 2.  Now use bayestestR package to check priors are informative
+```{r}
+check_prior(model, effects = "all")
+```
+
+
+
+
+
+# CHECK PRIOR PREDICTION LINES FROM FINAL MODEL
+
+# 1. Obtain draws of priors from final model
+```{r}
+prior <- prior_draws(model)
+prior %>% glimpse()
+```
+
+# 2. Plot prior prediction lines for sAge
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(-2, 2)) %>% 
+  mutate(c = Intercept + b_sAge * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  labs(x = "Age (std)",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-4, 4)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+
+# 3. Plot prior prediction lines for sFat
+## a. basic
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(-2, 2)) %>% 
+  mutate(c = Intercept + b_sFat * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  labs(x = "Fat (std)",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-2, 2)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+## b. for figure
+### i. prior prediction slopes
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(-2, 2)) %>% 
+  mutate(c = Intercept + b_sFat * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  labs(x = "Fat (standardised)",
+       y = "Log hair cortisol (standardisedd)") +
+  coord_cartesian(ylim = c(-2, 2)) +
+     theme_classic() +
+  theme(panel.grid = element_blank()) +
+
+     labs(title = "Draws from prior for effect of body fat on hair cortisol") +  
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+
+```
+
+
+### i. posterior prediction slopes
+```{r}
+set.seed(5)
+
+post_draws <- draws
+post_draws <- as.data.frame(post_draws)
+post_draws %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(-2, 2)) %>% 
+  mutate(c = Intercept + b_sFat * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "steelblue3", alpha = .4) +
+  labs(x = "Fat (standardised)",
+       y = "Log hair cortisol (standardisedd)") +
+  coord_cartesian(ylim = c(-2, 2)) +
+     theme_classic() +
+  theme(panel.grid = element_blank()) +
+
+
+     labs(title = "Draws from posterior for effect of body fat on hair cortisol") +  
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+
+```
+
+
+
+
+
+
+
+# 3. Plot prior prediction lines for comorbidity (yes)
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_comorbidityyes * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "comorbidity",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-2, 2)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+
+```
+
+
+
+
+# 4. Plot prior prediction lines for sex (male)
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_sexMale * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "Sex breed",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-2, 2)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+
+# 5. Plot prior prediction lines for breedckcs
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_breedckcs * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "CKCS breed",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-2, 2)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+
+# 6. Plot prior prediction lines for breedother
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_breedother * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "Other breed",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-4, 4)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+# 7. Plot prior prediction lines for breedpug
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_breedpug * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "Pug breed",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-4, 4)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+
+# 8. Plot prior prediction lines for breedret
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_breedpug * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "Pug breed",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-4, 4)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+
+
+
+
+
+# CHECK PRIOR PREDICTIVE DISTRIBUTION
+
+# 1. Prior Predictive Distribution
+Can simulate data just on the priors.  Fit model but only consider prior when fitting model.
+If this looks reasonable, it helps to confirm that your priors were reasonable
+```{r}
+set.seed(666)
+model_priors_only <- brm(slgCort ~ sFat + sAge + breed + sex + comorbidity + (1 | visit),
+                   family = skew_normal(),
+                   prior = priors,
+                   data = df2,
+                   sample_prior = "only",
+                   save_pars = save_pars(all =TRUE))
+```
+
+
+# 2. Check predictions against priors
+```{r}
+color_scheme_set("pink")
+pp_check(model_priors_only, ndraws = 100) +
+  xlim(-10, 20) +
+
+   theme_classic() +
+     labs(title = "Prior predictions of body fat model versus data", 
+         y = "Density", 
+         x = "Log hair cortisol (standardised") +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12),
+               legend.position = "inside", legend.position.inside = c(0.91, 0.83))
+
+```
+
+
+
+# MANUAL POSTERIOR PREDICTIVE DISTRIBUTION CHECKS
+NB Uses posterior_predict
+## 1. Posterior predictive distribution plots for a continuous predictor variable
+```{r}
+par(mfrow = c(2,2))
+# plot the observed data
+plot(slgCort ~ sFat, main = "Observed", xlab = "Fat (std)", ylab = "log hair cortisol (std)",
+     data = df2, ylim = c(-3, 3), xlim = c(-3,3), col = "steelblue3") # This is the observed data
+
+# use posterior predict to simulate predictions
+ppd <- posterior_predict(model) 
+
+
+# Plot 3 simulations of the data
+plot(ppd[50,] ~ df2$sFat, main = "Simulated", xlab = "Fat (std)", ylab = "log hair cortisol (std)",
+     ylim = c(-3,3), xlim = c(-3,3), col = "firebrick") 
+plot(ppd[51,] ~ df2$sFat, main = "Simulated", xlab = "Fat (std)", ylab = "log hair cortisol (std)",
+     ylim = c(-3,3), xlim = c(-3,3), col = "firebrick") 
+plot(ppd[52,] ~ df2$sFat, main = "Simulated", xlab = "Fat (std)", ylab = "log hair cortisol (std)",
+     ylim = c(-3,3), xlim = c(-3,3), col = "firebrick")
+```
+
+
+## 2. Posterior predictive distribution plots for a categorical predictor variable
+```{r}
+par(mfrow = c(2,2))
+vioplot(slgCort ~ comorbidity, data = df2, main = "Observed", col = "steelblue")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df2$comorbidity, main = "PPD", col = "firebrick")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df2$comorbidity, main = "PPD", col = "firebrick")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df2$comorbidity, main = "PPD", col = "firebrick")
+```
+
+
+
+
+
+
+## 3. Posterior predictive distribition plots for a categorical predictor variable
+```{r}
+par(mfrow = c(2,2))
+vioplot(slgCort ~ sex, data = df2, main = "Observed", col = "steelblue3")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df2$sex, main = "PPD", col = "firebrick")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df2$sex, main = "PPD", col = "firebrick")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df2$sex, main = "PPD", col = "firebrick")
+```
+
+
+
+## 4. Posterior predictive distribition plots for a categorical predictor variable with small group size
+```{r}
+par(mfrow = c(2,2))
+stripchart(slgCort ~ breed, vertical = TRUE, method = "jitter",
+           col = "steelblue3", data = df2, pch = 20, main = "Observed")
+stripchart(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ breed, vertical = TRUE, method = "jitter", col = "firebrick", data = df2, pch = 20, main = "PPD")
+stripchart(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ breed, vertical = TRUE, method = "jitter", col = "firebrick", data = df2, pch = 20, main = "PPD")
+stripchart(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ breed, vertical = TRUE, method = "jitter", col = "firebrick", data = df2, pch = 20, main = "PPD")
+```
+
+
+
+
+
+
+
+## ANALYSING THE POSTERIOR DISTRIBUTION
+
+
+# 1. Plot conditional effects from model
+```{r}
+plot(conditional_effects(model), ask = FALSE)
+```
+
+
+
+### b. format and plot conditional effects for weight_status
+```{r}
+ce <- conditional_effects(model, "sFat", method = "posterior_predict", prob = 0.95)
+plot(ce, plot = FALSE)[[1]] +
+         theme_bw() +
+         labs(title = "Conditional effect of body fat on hair cortisol") +
+         labs(y = paste0("Log hair cortisol (standardised)")) +
+         labs(x = paste0("Body fat (standardised)")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey50", size = 12),
+               legend.position = "inside", legend.position.inside = c(0.93, 0.80))
+```
+
+
+### b. format and plot conditional effects for weight_status and comorbidity
+```{r}
+ce <- conditional_effects(model, "sFat:comorbidity")
+plot(ce, plot = FALSE)[[1]] +
+
+           theme_bw() +
+         labs(title = "Conditional effect of body fat on hair cortisol") +
+         labs(y = paste0("Log hair cortisol (standardised)")) +
+         labs(x = paste0("Body fat (standardised)")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey50", size = 12),
+               legend.position = "inside", legend.position.inside = c(0.91, 0.13))
+```
+
+
+
+
+
+
+# mcmc_plot of model
+```{r}
+color_scheme_set("blue")
+mcmc_plot(model)
+```
+
+
+##### body fat vs prior
+###### 1. distributional
+```{r}
+mcmc_plot(model,
+          variable = c("b_sFat", "prior_b_sFat"))
+```
+
+
+###### 2. density
+```{r}
+mcmc_plot(model,
+          variable = c("b_sFat", "prior_b_sFat"),
+          type = "areas") +
+
+   theme_classic() +
+    labs(title = "Prior vs posterior distribution for body fat effect") +
+         labs(y = "") +
+         labs(x = paste0("Possible parameter values")) +
+    scale_y_discrete(labels=c("prior_b_sFat" = "Prior", "b_sFat" = "Posterior"),
+                     limits = c("prior_b_sFat", "b_sFat")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+```
+
+
+
+
+
+## a.just parameters of beta variables
+```{r}
+mcmc_plot(model,
+          variable = "b_sexMale")
+```
+
+
+## b. all parameters except 
+```{r}
+mcmc_plot(model, 
+          variable = c("b_Intercept", "alpha",
+         "b_sFat",
+         "b_sAge",
+         "b_breedckcs",
+         "b_breedpug",
+         "b_breedret",
+         "b_breedother",
+         "b_sexMale",
+         "b_comorbidityyes"))
+```
+
+
+# 3. Plot all posterior distributions
+```{r}
+posterior <- as.matrix(model)
+mcmc_areas(posterior,
+pars = c("b_Intercept", "alpha",
+         "b_sFat",
+         "b_sAge",
+         "b_breedckcs",
+         "b_breedpug",
+         "b_breedret",
+         "b_breedother",
+         "b_sexMale",
+         "b_comorbidityyes"),
+# arbitrary threshold for shading probability mass
+prob = 0.75)
+```
+
+
+## 4. plot posterior distribution for betas only
+```{r}
+posterior <- as.matrix(model)
+mcmc_areas(posterior,
+    pars = c("b_sFat",
+         "b_sAge",
+         "b_breedckcs",
+         "b_breedpug",
+         "b_breedret",
+         "b_breedother",
+         "b_sexMale",
+         "b_comorbidityyes"),
+    prob = 0.75) # arbitrary threshold for shading probability mass
+```
+
+
+
+
+# Plot posterior distribution for body fat percentage
+```{r}
+posterior <- as.matrix(model)
+mcmc_areas(posterior,
+pars = "b_sFat",
+# arbitrary threshold for shading probability mass
+prob = 0.97) +
+  
+   theme_classic() +
+     labs(title = "Posterior distribution for body fat effect", 
+         y = "Density distribution", 
+         x = "Possible parameter values") +
+    scale_y_discrete(labels=("b_sFat" = "Beta for fat mass")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+```
+
+
+## 5. Describe the posterior visually
+```{r}
+# Focus on describing posterior
+hdi_range <- hdi(model, ci = c(0.65, 0.70, 0.80, 0.89, 0.95))
+plot(hdi_range, show_intercept = T)
+```
+
+### just sFat
+```{r}
+# Focus on describing posterior
+hdi_range <- hdi(model, ci = c(0.65, 0.70, 0.80, 0.89, 0.97), parameters = "sFat")
+plot(hdi_range, show_intercept = T) +
+
+    labs(title = "Posterior distribution for body fat effect") +
+         labs(y = "Density distribution") +
+         labs(x = "Possible parameter values") +
+           theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+```
+
+
+
+
+# 6. Effect of body fat on Log cortisol
+##. a. Using 'fitted' which is a wrapper for posterior_epred (only returns error from model)
+```{r}
+# Create new data for an average dog without a comorbidity
+nd <- tibble(sFat = seq(from = -3.2, to = 3.2, length.out = 30), visit = "v0", breed = "mix", sex = "Female", comorbidity = "no", sAge = 0)
+
+# now use `fitted()` to get the model-implied trajectories
+pr1 <- fitted(model,
+       newdata = nd) %>% 
+  data.frame() %>% 
+  bind_cols(nd) 
+
+# Create new data for an average dog with a comorbidity
+nd2 <- tibble(sFat = seq(from = -3.2, to = 3.2, length.out = 30), visit = "v0", breed = "mix", sex = "Female", comorbidity = "yes", sAge = 0)
+
+# now use `fitted()` to get the model-implied trajectories
+pr2 <- fitted(model,
+       newdata = nd2) %>% 
+  data.frame() %>% 
+  bind_cols(nd2)
+
+
+  # plot predictions for no comorbidity
+  ggplot(data = pr1, aes(x = sFat)) +
+  geom_smooth(aes(y = Estimate, ymin = Q2.5, ymax = Q97.5),
+              stat = "identity",
+              fill = "#F8766D", color = "#F8766D", alpha = 1/5, linewidth = 1.25) +
+  
+  # plot predictions for comorbidity
+  geom_smooth(data = pr2, aes(y = Estimate, ymin = Q2.5, ymax = Q97.5),
+              stat = "identity",
+              fill = "#00BFC4", color = "#00BFC4", alpha = 1/5, linewidth = 1.25) + 
+ 
+  
+   # plot actual data
+     geom_point(data = df2, 
+             aes(y = slgCort, colour = comorbidity), 
+             size = 3) +
+ 
+   theme_bw() +
+  labs(title = "Predicted effect of body fat on log hair cortisol",
+       x = "Body fat (standardised)",
+       y = "Log hair cortisol (standardised)") +
+  theme(axis.title.y = element_text(size=14, face="bold"), 
+        axis.title.x = element_text(size=14, face="bold"),
+        title = element_text(size=14, face="bold"),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = "inside", legend.position.inside = c(0.87, 0.13)) +
+  coord_cartesian(ylim = c(-3, 3)) +
+  scale_x_continuous(breaks=seq(-3, 3 , 1))
+```
+
+
+
+
+##. b. Using 'predict' which is a wrapper for posterior_pred (returns error from model and residual error)
+```{r}
+# Create new data for an average dog without a comorbidity
+nd <- tibble(sFat = seq(from = -3.2, to = 3.2, length.out = 30), visit = "v0", breed = "mix", sex = "Female", comorbidity = "no", sAge = 0)
+
+# now use `fitted()` to get the model-implied trajectories
+pr1 <- predict(model,
+       newdata = nd) %>% 
+  data.frame() %>% 
+  bind_cols(nd) 
+
+# Create new data for an average dog with a comorbidity
+nd2 <- tibble(sFat = seq(from = -3.2, to = 3.2, length.out = 30), visit = "v0", breed = "mix", sex = "Female", comorbidity = "yes", sAge = 0)
+
+# now use `fitted()` to get the model-implied trajectories
+pr2 <- predict(model,
+       newdata = nd2) %>% 
+  data.frame() %>% 
+  bind_cols(nd2)
+
+
+  # plot predictions for no comorbidity
+  ggplot(data = pr1, aes(x = sFat)) +
+  geom_smooth(aes(y = Estimate, ymin = Q2.5, ymax = Q97.5),
+              stat = "identity",
+              fill = "#F8766D", color = "#F8766D", alpha = 1/5, linewidth = 1.25) +
+  
+  # plot predictions for comorbidity
+  geom_smooth(data = pr2, aes(y = Estimate, ymin = Q2.5, ymax = Q97.5),
+              stat = "identity",
+              fill = "#00BFC4", color = "#00BFC4", alpha = 1/5, linewidth = 1.25) + 
+ 
+  
+   # plot actual data
+     geom_point(data = df2, 
+             aes(y = slgCort, colour = comorbidity), 
+             size = 3) +
+ 
+   theme_bw() +
+  labs(title = "Predicted effect of body fat on log hair cortisol",
+       x = "Body fat (standardised)",
+       y = "Log hair cortisol (standardised)") +
+  theme(axis.title.y = element_text(size=14, face="bold"), 
+        axis.title.x = element_text(size=14, face="bold"),
+        title = element_text(size=14, face="bold"),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = "inside", legend.position.inside = c(0.87, 0.13)) +
+  coord_cartesian(ylim = c(-3, 4)) +
+  scale_x_continuous(breaks=seq(-3, 3 , 1))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# HYPOTHESIS TESTS
+
+## 1. Hypothesis test to check if mean association between cortisol and body fat (from draws) is >0
+```{r}
+draws <- as.matrix(model)
+mean(draws[,3] >0)
+```
+
+
+## 2. Check 97% credible interval of with HPDI for body fat from draws 
+```{r}
+HPDI(draws[,3], prob=0.97)
+```
+
+
+## 3. Hypothesis test that the effect of body fat is positive or negative
+```{r}
+hypothesis(model, "sFat >0")
+hypothesis(model, "sFat <0")
+```
+
+
+
+# POSTERIOR PREDICTIONS FOR DATA FROM NEW DATA
+
+
+## 1. Plot the predicted effect of body fat mass on log hair cortisol
+```{r}
+set.seed(666)
+nd1 <- tibble(sFat = seq(-3, 3, by = 1), sAge = 0, visit = 0,
+              sex = "Female", comorbidity = "no",
+              breed = "mix",
+              case_number = c("dog1", "dog2", "dog3","dog4", "dog5", "dog6", "dog7"))
+
+p1 <-
+  predict(model,
+          resp = "slgCort",
+          allow_new_levels = TRUE,
+          newdata = nd1) %>% 
+  data.frame() %>% 
+  bind_cols(nd1) %>% 
+  
+  ggplot(aes(x = sFat, y = Estimate, ymin = Q2.5, ymax = Q97.5)) +
+  
+  geom_linerange(aes(ymin = Estimate - Est.Error, ymax = Estimate + Est.Error),
+                 linewidth = 1, color = "#F8766D", alpha = 3/5) +
+  geom_point(size = 5, color = "#F8766D") +
+  theme_bw() +
+  labs(title = "Predicted effect of body fat on hair cortisol",
+       x = "Body fat (standardised)",
+       y = "Log hair cortisol (standardised)") +
+  theme(axis.title.y = element_text(size=12, face="bold"), 
+        axis.title.x = element_text(size=12, face="bold"),
+        title = element_text(size=12, face="bold"),
+        plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(ylim = c(-2.5, 2.5)) +
+  scale_x_continuous(breaks=seq(-3, 3 , 1))
+
+plot(p1)
+```
+
+
+
+
+
+## 7. Plot the predicted effect of body fat on log hair cortisol when comorbidity varies
+### a. create data for groups of dogs with different comorbidity status and predict results
+```{r}
+set.seed(666)
+
+nd3 <- tibble(sFat = seq(-3, 3, by = 1), sAge = 0, visit = 0,
+              sex = "Female", comorbidity = "no",
+              breed = "mix",
+              case_number = c("dog1", "dog2", "dog3","dog4", "dog5", "dog6", "dog7"))
+
+nd4 <- tibble(sFat = seq(-3, 3, by = 1), sAge = 0, visit = 0,
+              sex = "Female", comorbidity = "yes",
+              breed = "mix",
+              case_number = c("dog1", "dog2", "dog3","dog4", "dog5", "dog6", "dog7"))
+
+
+# predict outcome for comorbidity = no
+pr3 <-
+  predict(model,
+          resp = "slgCort",
+          allow_new_levels = TRUE,
+          newdata = nd3) %>% 
+  data.frame() %>% 
+  bind_cols(nd3)
+
+# predict outcome for comorbidity = yes
+pr4 <-
+  predict(model,
+          resp = "slgCort",
+          allow_new_levels = TRUE,
+          newdata = nd4) %>% 
+  data.frame() %>% 
+  bind_cols(nd4)
+
+# bind data for graphing
+pr34 <-rbind(pr3, pr4)
+pr34 <-  as.data.frame(pr34)
+```
+
+
+
+### b. Plot the predicted estmates with estimated error
+```{r}
+p3 <-  ggplot(pr34, aes(x = sFat, y = Estimate, , colour = comorbidity)) +
+  
+  geom_pointrange(aes(ymin = Estimate - Est.Error, ymax = Estimate + Est.Error),
+                 linewidth = 1, size = 0.5, position = position_dodge2(width = 0.5, preserve = "single")) +
+    theme_bw() +
+    labs(title = "Predicted effect of body fat & comorbidity on hair cortisol") +
+         labs(y = paste0("Predicted log hair cortisol (std)")) +
+         labs(x = paste0("Body fat (std)")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5)) +
+          coord_cartesian(ylim = c(-2.5, 2.5), xlim = c(-3.5, 3.5)) +
+         scale_x_continuous(limits = c(-3.5, 3.5), n.breaks = 7)
+
+plot(p3)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+## 4. Visualising the posterior of a model using numerical and graphical methods
+#### a. basic (one dog only)
+```{r}
+# create new dataframe which contains results of the first dog
+new_data <- rbind(df2[1,], df2[1,])
+# Now change one category to be different
+new_data$sFat <- c(-1, 1)
+# Visualise df to make sure it has worked
+new_data
+
+# Now get predictions from the draws of the model
+pred_new <- posterior_predict(model, newdata = new_data)
+
+
+# Compare difference in means between the two categories
+difference <- pred_new[,2] - pred_new[,1]
+
+
+# Examine mean of difference
+mean(difference)
+# View histogram of this
+dens(difference)
+# Create HPDI
+HPDI(difference, 0.97)
+```
+
+
+#### ii. plot effects
+```{r}
+# Create data frame for the plot
+pred_new <- data.frame(pred_new)
+pred_new$draws <- seq(1:nrow(pred_new))
+colnames(pred_new) <- c("sFat-1", "sFat+1", "draws")
+dens_l <- melt(pred_new, id.vars = "draws", variable_name = "standardised_fat")
+
+
+# Plot distribution of difference 
+ggplot(dens_l, aes(value, fill = standardised_fat))  +
+  geom_density(alpha = 1/2)  +
+  xlim(-5, 10) +
+    theme_bw() +
+    labs(title = "Predicted log hair cortisol by body fat mass") +
+         labs(y = paste0("Probability density")) +
+         labs(x = paste0("Predicted Log Hair Cortisol (standardised)")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+              legend.position = "inside", legend.position.inside = c(0.87, 0.87))
+```
+
+
+
+```{r}
+# create new dataframe which contains results of the first dog
+new_data2 <- rbind(df2[1,], df2[1,])
+# Now change one category to be different
+new_data2$sFat <- c(-2, 2)
+# Visualise df to make sure it has worked
+new_data2
+
+# Now get predictions from the draws of the model
+pred_new2 <- posterior_predict(model, newdata = new_data2)
+
+# Create data frame for the plot
+pred_new2 <- data.frame(pred_new2)
+pred_new2$draws <- seq(1:nrow(pred_new2))
+colnames(pred_new2) <- c("sFat-2", "sFat+2", "draws")
+dens_l2 <- melt(pred_new2, id.vars = "draws", variable_name = "standardised_fat")
+
+
+# Plot distribution of difference 
+ggplot(dens_l2, aes(value, fill = standardised_fat))  +
+  geom_density(alpha = 1/2)  +
+  xlim(-6, 10) +
+    theme_bw() +
+    labs(title = "Predicted log hair cortisol by body fat mass") +
+         labs(y = paste0("Probability density")) +
+         labs(x = paste0("Predicted Log Hair Cortisol (standardised)")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+              legend.position = "inside", legend.position.inside = c(0.87, 0.87))
+```
+
+
+
+
+
+
+
+### b. Advanced... using all dogs in the model
+```{r}
+# create new dataframe which contains results of all dogs
+new_data1 <- df2
+# Now change one category to be different
+new_data1$sFat <- -1
+
+# create new dataframe which contains results of the first dog
+new_data2 <- df2
+# Now change one category to be different
+new_data2$sFat <- 1
+
+# Now get predictions from the draws of the models
+pred_nd1 <- posterior_predict(model, newdata = new_data1)
+pred_nd2 <- posterior_predict(model, newdata = new_data2)
+pred_diff <- pred_nd2 - pred_nd1
+pred_diff <- data.frame(pred_diff)
+
+# Create mean of differences for each column (dog) of the dataframe
+pred_diff_mean <- apply(pred_diff, 2, mean)
+# View histogram of mean differences
+dens(pred_diff_mean)
+# mean difference
+mean(pred_diff_mean)
+# Create HPDI
+HPDI(pred_diff_mean, 0.97)
+```
+
+
+
+
+
+
+# DO MODEL WITH GAUSSIAN DISTRIBUTION
+
+
+## 1. Set priors
+```{r}
+# Set individual priors
+prior_int <- set_prior("normal(0, 0.5)", class = "Intercept")
+prior_b <- set_prior("normal(0, 1)", class = "b")
+prior_b_sex <- set_prior("normal(0, 1)", class = "b", coef = "sexMale")
+prior_b_co <- set_prior("normal(0.25, 1)", class = "b", coef = "comorbidityyes")
+prior_b_f <- set_prior("normal(0, 0.5)", class = "b", coef = "sFat")
+prior_b_sAge <- set_prior("normal(0, 0.5)", class = "b", coef = "sAge")
+prior_sd <- set_prior("normal(0, 1)", class = "sd")
+
+# Combine priors into list
+priors2 <- c(prior_int, prior_b, prior_b_sex, prior_b_co, prior_b_f, prior_b_sAge, prior_sd)
+```
+
+
+
+## 2. Run model2
+Increased adapt_delta >0.8 (0.9999 here), as had divergent transitions
+```{r}
+set.seed(666)
+model2 <- brm(bf(slgCort ~ sFat + sAge + breed + sex + comorbidity + (1 | visit),
+                   sigma ~ comorbidity),
+                   family = gaussian(),
+                   prior = priors2,
+                   data = df2,
+                   control=list(adapt_delta=0.9999, stepsize = 0.001, max_treedepth =15),
+                   iter = 8000, warmup = 2000,
+                   cores = 4,
+                   save_pars = save_pars(all =TRUE),
+                   sample_prior = TRUE)
+```
+
+## 3. Get summary of model2
+```{r}
+summary(model2)
+```
+
+
+
+
+
+
+## 4.  PSIS LOO-CV to check model performance
+```{r}
+loo_model2 <- loo(model2, moment_match = TRUE)
+loo_model2
+```
+
+
+
+
+## 5. Basic check of simulations based on posterior distribution, versus the real data distribution
+checks whether actual data is similar to simulated data.
+```{r}
+color_scheme_set("blue")
+pp_check(model2, ndraws = 100) +
+
+   theme_classic() +
+   labs(title = "Posterior predictions of body fat model (normal)", 
+         y = "Density", 
+         x = "Log hair cortisol (standardised") +
+    xlim(-5, 7) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12), ,
+               legend.position = "inside", legend.position.inside = c(0.91, 0.83))
+```
+
+
+
+
+
+
+# C. DO MODEL WITH Student's T DISTRIBUTION
+
+## 1. Set priors3
+```{r}
+# Set individual priors
+prior_int <- set_prior("normal(0, 0.5)", class = "Intercept")
+prior_b <- set_prior("normal(0, 1)", class = "b")
+prior_b_sex <- set_prior("normal(0, 1)", class = "b", coef = "sexMale")
+prior_b_co <- set_prior("normal(0.25, 1)", class = "b", coef = "comorbidityyes")
+prior_b_f <- set_prior("normal(0, 0.5)", class = "b", coef = "sFat")
+prior_b_sAge <- set_prior("normal(0, 0.5)", class = "b", coef = "sAge")
+prior_sd <- set_prior("normal(0, 1)", class = "sd")
+
+# Combine priors into list
+priors3 <- c(prior_int, prior_b, prior_b_sex, prior_b_co, prior_b_f, prior_b_sAge, prior_sd)
+```
+
+
+
+## 2. Run model3
+Increased adapt_delta >0.8 (0.9999 here), as had divergent transitions
+```{r}
+set.seed(666)
+model3 <- brm(bf(slgCort ~ sFat + sAge + breed + sex + comorbidity + (1 | visit),
+                   sigma ~ comorbidity),
+                   family = student(),
+                   prior = priors3,
+                   data = df2,
+                   control=list(adapt_delta=0.9999, stepsize = 0.001, max_treedepth =15),
+                   iter = 8000, warmup = 2000,
+                   cores = 4,
+                   save_pars = save_pars(all =TRUE),
+                   sample_prior = TRUE)
+```
+
+
+## 3. Get summary of model3
+```{r}
+summary(model3)
+```
+
+
+
+# 4.PSIS LOO-CV to check model performance
+```{r}
+loo_model3 <- loo(model3, moment_match = TRUE)
+loo_model3
+```
+
+
+
+# 5. Compare performance of models with different likelihhod functions
+```{r}
+loo_compare(loo_model, loo_model2, loo_model3)
+```
+
+
+## 1. Basic check of simulations based on posterior distribution, versus the real data distribution
+checks whether actual data is similar to simulated data.
+```{r}
+color_scheme_set("blue")
+pp_check(model3, ndraws = 100) +
+
+   theme_classic() +
+     labs(title = "Posterior predictions of body fat model (Student's t)", 
+         y = "Density", 
+         x = "Log hair cortisol (standardised") +
+     xlim(-5, 7) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12), ,
+               legend.position = "inside", legend.position.inside = c(0.91, 0.83))
+```
+
+
+
+
+
+
+# C. DO MODEL WITH Student's T DISTRIBUTION
+
+# 1. Set priors
+```{r}
+# Set individual priors
+prior_int <- set_prior("normal(0, 0.5)", class = "Intercept")
+prior_sig <- set_prior("exponential(1)", class = "sigma")
+prior_b <- set_prior("normal(0, 1)", class = "b")
+prior_b_sex <- set_prior("normal(0, 1)", class = "b", coef = "sexMale")
+prior_b_co <- set_prior("normal(0.25, 1)", class = "b", coef = "comorbidityyes")
+prior_b_f <- set_prior("normal(0, 0.5)", class = "b", coef = "sFat")
+prior_b_sAge <- set_prior("normal(0, 0.5)", class = "b", coef = "sAge")
+prior_sd <- set_prior("normal(0, 1)", class = "sd")
+prior_alpha <- set_prior("normal(4, 2)", class = "alpha")
+
+# Combine priors into list
+priors4 <- c(prior_int, prior_sig, prior_b, prior_b_sex, prior_b_co, prior_b_f, prior_b_sAge, prior_sd, prior_alpha)
+```
+
+
+
+
+
+## 2. Run model4
+Increased adapt_delta >0.8 (0.9999 here), as had divergent transitions
+```{r}
+set.seed(666)
+model4 <- brm(slgCort ~ sFat + sAge + breed + sex + comorbidity + (1 | visit),
+                   family = skew_normal(),
+                   prior = priors4,
+                   data = df2,
+                   control=list(adapt_delta=0.9999, stepsize = 0.001, max_treedepth =15),
+                   iter = 8000, warmup = 2000,
+                   cores = 4,
+                   save_pars = save_pars(all =TRUE),
+                   sample_prior = TRUE)
+```
+
+
+## 3. Get summary of model3
+```{r}
+summary(model4)
+```
+
+
+
+# 4.PSIS LOO-CV to check model performance
+```{r}
+loo_model4 <- loo(model4, moment_match = TRUE)
+loo_model4
+```
+
+
+
+# 5. Compare performance of models with different likelihhod functions
+```{r}
+loo_compare(loo_model, loo_model4)
+```
+
+
+
+
+## 6. Basic check of simulations based on posterior distribution, versus the real data distribution
+checks whether actual data is similar to simulated data.
+```{r}
+color_scheme_set("blue")
+pp_check(model4, ndraws = 100) +
+
+   theme_classic() +
+     labs(title = "Posterior predictions of body fat model (Student's t)", 
+         y = "Density", 
+         x = "Log hair cortisol (standardised") +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12), ,
+               legend.position = "inside", legend.position.inside = c(0.91, 0.83))
+```
+
