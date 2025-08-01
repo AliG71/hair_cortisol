@@ -7,6 +7,6 @@ This GitHub contains the following:
 
 2. R Markdown files.  .rmd files for final models and senstivitiy analyses
 
-3. HTML files showing statisical reports from all models.
+3. HTML or PDF files showing statisical reports from all models.
 
 
