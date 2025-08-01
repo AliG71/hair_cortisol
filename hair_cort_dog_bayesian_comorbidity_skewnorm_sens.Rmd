@@ -1,0 +1,2295 @@
+---
+title: "hair_cortisol_dog_combined"
+author: "Alex German"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Check working directory
+```{r}
+getwd()
+```
+
+
+
+
+
+# Load packages
+```{r}
+library(dlookr)
+library(dplyr)
+library(ggplot2)
+library(psych)
+library(reshape)
+library(readxl)
+library(tidyverse)
+library(vioplot)
+library(vtable)
+
+library(brms)
+library(bayesplot)
+library(bayestestR)
+library(loo)
+library(priorsense)
+library(rethinking)
+
+```
+
+
+# Load data
+```{r}
+df <- read_xlsx("hair_cort_dog_all.xlsx", col_types = c("text", "text",  
+                               "text", "text", "text", "text",
+                               "text", "numeric","text", "skip",
+                               "numeric", "skip", "skip", 
+                               "numeric", "skip"))
+df <- as.data.frame(df)
+```
+
+
+
+# INITIAL DATA PLOTTING AND EXPLORATION
+
+## Check characteristics of df
+```{r}
+dim(df) # will tell you how many rows and columns the dataset has
+class(df) # will tell you what data structure has the dataset been assigned
+```
+
+
+## Explore the dataset to understand its structure.
+```{r}
+head(df)
+```
+
+
+# 1.  Get summary stats for numeric data ####
+```{r}
+numeric_df <- Filter(is.numeric, df)
+describe(numeric_df) # the describe function in psych provides summary stats
+```
+
+
+
+# 2. Check normality of all numeric variables
+## a. graphical assessment
+```{r}
+plot_normality(numeric_df)
+```
+
+
+## b. shapiro-wilk test
+```{r}
+apply(numeric_df, 2, shapiro.test)
+```
+
+
+## c. repeat Q-Q plots with transformed data
+### i. log(cortisol)
+```{r}
+qqnorm(df$cortisol)
+qqline(df$cortisol, col = "red")
+qqnorm(log(df$cortisol))
+qqline(log(df$cortisol), col = "red")
+```
+
+### ii Shapiro test for log cortisol
+```{r}
+shapiro.test(log(df$cortisol))
+```
+
+
+
+# 3. Check cortisol data numerically
+## a. summarisecortisol and log cortisol
+```{r}
+summary(df$cortisol)
+sd(df$cortisol)
+summary(log(df$cortisol))
+
+```
+
+
+## b. log-transform cortisol variable
+```{r}
+df$lgCort <- log(df$cortisol)
+summary(df$lgCort)
+sd(df$lgCort)
+```
+
+
+## c. visualise lgCort variable
+```{r}
+hist(df$lgCort)
+```
+
+
+## d. Check hair cortisol by comorbidity
+### i. cortisol
+```{r}
+describeBy(cortisol ~ comorbidity, data = df)
+```
+
+## ii. lgCort
+```{r}
+describeBy(lgCort ~ comorbidity, data = df)
+```
+
+
+## iii. Calculate mean difference in lgCort for different comorbidity status
+```{r}
+diffLgCortCo <- mean(df$lgCort[df$comorbidity == "yes"]) - mean(df$lgCort[df$comorbidity == "no"])
+diffLgCortCo
+exp(diffLgCortCo)
+exp(0.25)
+diffLgCortCo / 1.29
+```
+
+
+# 4. Generate variables for use in modelling
+
+## a. create a binary outcome variable for group, where "stopped" is ref category
+```{r}
+df$weight_loss_success <- df$group
+df$weight_loss_success <- ifelse(df$weight_loss_success == "completed", "yes", "no")
+```
+
+
+## b. create simple category name for breed and convert to factor
+```{r}
+df$breed <- df$breed_group
+df$breed <- factor(df$breed, levels = c("mix", "ckcs", "pug", "ret", "other"))
+head(df$breed)
+```
+
+## c. reorder season so spring is reference and rest are in orderd
+```{r}
+df$season <- factor(df$season, levels = c("spring", "summer", "autumn", "winter"))
+head(df$season)
+```
+
+
+## d. make light hair colour the reference category
+```{r}
+df$coat_colour <- factor(df$coat_colour, levels = c("light", "mix", "dark"), ordered = FALSE)
+head(df$coat_colour)
+```
+
+
+
+# 5. Generate data summary
+```{r}
+sumtable(df)
+```
+
+
+
+# 6. Visualise associations
+## a. associtation between cortisol and sex
+### i. violin plot (vioplot package) for cortisol
+```{r}
+par(mfrow = c(1,1))
+vioplot(cortisol ~ sex, col = "firebrick",
+        data = df)
+```
+
+
+### ii. violin plot (vioplot package) for lgCort
+```{r}
+par(mfrow = c(1,1))
+vioplot(lgCort ~ sex, col = "lemonchiffon",
+        data = df)
+```
+
+
+## b. association between lgCortisol and breed...
+### i. violin plot (vioplot package) for lgCort
+```{r}
+par(mfrow = c(1,1))
+vioplot(lgCort ~ breed, col = "firebrick",
+        data = df)
+```
+
+
+### iii. stripchart for lgCort
+```{r}
+stripchart(lgCort ~ breed, vertical = TRUE, method = "jitter",
+           col = "steelblue3", data = df, pch = 20)
+
+```
+
+
+
+## c. association between lgCortisol and season 
+### i. violin plot (vioplot package) for lgCort
+```{r}
+par(mfrow = c(1,1))
+vioplot(lgCort ~ season, col = "lemonchiffon",
+        data = df)
+```
+
+### ii. stripchart for lgCort
+```{r}
+stripchart(lgCort ~ season, vertical = TRUE, method = "jitter",
+           col = "steelblue3", data = df, pch = 20)
+
+```
+
+
+
+## d. association between lgCortisol and comorbidity 
+### i. violin plot (vioplot package) for lgCort
+```{r}
+par(mfrow = c(1,1))
+vioplot(cortisol ~ comorbidity, col = "steelblue",
+        data = df)
+```
+
+
+### ii. violin plot (vioplot package) for lgCort
+```{r}
+par(mfrow = c(1,1))
+vioplot(lgCort ~ comorbidity, col = "steelblue",
+        data = df)
+```
+
+
+
+
+
+## e. association between cortisol vs age 
+### iv. basic dot-plot for cortisol vs age
+```{r}
+plot(cortisol ~ age, col = "steelblue3", data = df, pch = 20)
+```
+
+
+### iv. basic dot-plot for lgCort vs age
+```{r}
+plot(lgCort ~ age, col = "steelblue3", data = df, pch = 20)
+```
+
+
+
+
+# STANDARDIZE DATA FOR MODELLING
+
+## 1. standardize data for Bayesian modelling
+## a. fat
+```{r}
+df$sFat <- standardize(df$fat_percent)
+summary(df$sFat)
+```
+
+## b. age
+```{r}
+df$sAge <- standardize(df$age)
+summary(df$sAge)
+```
+
+
+## c. cortisol
+```{r}
+df$slgCort <- standardize(df$lgC)
+summary(df$slgCort)
+hist(df$slgCort)
+```
+
+
+
+## 2. create dataset only containing complete data
+```{r}
+df2 <- na.omit(df)
+```
+
+
+
+### Combined dot plot and boxplot for LgCort vs comorbidity
+```{r}
+  # plot
+  ggplot(data = df2, aes(x = comorbidity)) +
+    geom_boxplot(aes(y = slgCort),
+                 color = "firebrick4", width=0.5) +
+ 
+   geom_point(aes(y = slgCort), 
+             size = 2, color = "firebrick4",
+            position = position_jitter(width = 0.1)) +
+
+   theme_bw() +
+    labs(title = "Log hair cortisol by body fat mass") +
+         labs(y = paste0("Log Hair Cortisol (standardised)")) +
+         labs(x = paste0("Comorbidity")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+              legend.position = "inside", legend.position.inside = c(0.87, 0.87))
+```
+
+
+
+
+
+
+
+
+# MODEL FOR COMORBIDITY ALLOWING UNEQUEAL VARIANCE FOR COMORBIDITY
+
+##  i. Model code
+
+model <- brm(slgCort | mi(0.118) ~ comorbidity + sAge + breed + sex + (1 | visit),
+                   family = skew_normal(),
+                   data = df)
+
+## ii. Check what priors need to be set
+```{r}
+default_prior(slgCort | mi(0.118) ~ comorbidity + sAge + breed + sex + (1 | visit),
+                   family = skew_normal(),
+                   data = df)
+```
+
+
+
+
+
+## 1. Set priors
+NB skip the sigma parameter as this will be determined by the model
+```{r}
+# Set individual priors
+prior_int <- set_prior("normal(0, 1)", class = "Intercept")
+prior_b <- set_prior("normal(0, 1)", class = "b")
+prior_b_sex <- set_prior("normal(0, 1)", class = "b", coef = "sexMale")
+prior_b_co <- set_prior("normal(0.25, 1)", class = "b", coef = "comorbidityyes")
+prior_b_sAge <- set_prior("normal(0, 0.5)", class = "b", coef = "sAge")
+prior_sd <- set_prior("normal(0, 1)", class = "sd")
+prior_alpha <- set_prior("normal(4, 2)", class = "alpha")
+
+# Combine priors into list
+priors <- c(prior_int, prior_b, prior_b_sex, prior_b_co, prior_b_sAge, prior_sd, prior_alpha)
+```
+
+## 2. Run model
+Increased adapt_delta >0.8 (0.999 here), as had divergent transitions
+```{r}
+set.seed(999)
+model <- brm(bf(slgCort | mi(0.118) ~ comorbidity + sAge + breed + sex + (1 | visit),
+                 sigma ~ comorbidity),
+                   family = skew_normal(),
+                   prior = priors,
+                   data = df,
+                   control=list(adapt_delta = 0.999999, stepsize = 0.001, max_treedepth =15),
+                   iter = 8000, warmup = 2000,
+                   cores = 4,
+                   save_pars = save_pars(all =TRUE),
+                   sample_prior = TRUE)
+```
+
+
+## 3. get summary of model
+```{r}
+summary(model)
+```
+
+
+## 4. MCMC diagnostics
+## a. check distriitions and trace plots
+```{r}
+plot(model)
+```
+Looking for hairy caterpillars
+
+
+## b. try a trank plot as well
+```{r}
+mcmc_plot(model, type = 'rank_overlay')
+```
+
+
+
+
+## 5. calculate 97% HPDI for comorbiity
+Usually better than the compatability intervals given in the summary
+```{r}
+draws <- as.matrix(model)
+HPDI(draws[,3], 0.97) # 1st column is draws for comorbidity
+```
+
+
+
+# CHECKS ON MODEL
+
+## 1. basic check of simulations based on posterior distribution, versus the real data distribution
+checks whether actual data is similar to simulated data.
+```{r}
+pp_check(model, ndraws = 100) 
+```
+
+
+
+## 2. check some individual draws versus observed using pp_check
+```{r}
+par(mfrow = c(1,1))
+pp_check(model, type = "hist", ndraws = 11, binwidth = 0.25) # separate histograms of 11 MCMC draws vs actual data
+```
+
+
+## 3. other pp_check graphs
+```{r}
+pp_check(model, type = "error_hist", ndraws = 11, , binwidth = 0.25) # separate histograms of errors for 11 draws
+pp_check(model, type = "scatter_avg", ndraws = 100) # scatter plot
+pp_check(model, type = "stat_2d") #  scatterplot of joint posteriors
+```
+
+
+## 4 error scatter average  plot (recommended by Buerkner)
+```{r}
+pp_check(model, type = "error_scatter_avg")
+```
+
+
+
+## 4. pairs plot
+```{r}
+pairs(model)
+```
+
+
+
+
+# AUTOMATED PRIOR SENSITIVITY USING THE PRIOR SENSE PACKAGE
+## 1. Try automated prior sensitivity analysis using the prior sense package
+First, check the sensitivity of the prior and likelihood to power-scaling. 
+Posterior and posteriors resulting from power-scaling.
+```{r}
+powerscale_sensitivity(model, 
+                       variable = c("b_Intercept",
+                                    "b_sAge",
+                                    "b_breedckcs", "b_breedother", "b_breedpug", "b_breedret",
+                                    "b_sexMale",
+                                    "b_comorbidityyes"))
+```
+
+
+
+## 2.  Now use bayestestR package to check priors are informative
+```{r}
+check_prior(model, effects = "all")
+```
+
+
+
+# CHECK PRIOR PREDICTION LINES FROM FINAL MODEL
+
+## 1. obtain draws of priors from final model
+```{r}
+prior <- prior_draws(model)
+prior %>% glimpse()
+```
+
+
+## 2. plot prior predictions
+### a. prior prediction lines for Age
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(-2, 2)) %>% 
+  mutate(c = Intercept + b_sAge * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  labs(x = "Age (std)",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-4, 4)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+### b. plot prior predictions comorbidity (yes)
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_comorbidityyes * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "comorbidity",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-4, 4)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+
+### c. plot prior predictions for sex (Male)
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_sexMale * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "Sex breed",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-4, 4)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+
+
+
+### d. Plot prior predictions for breedckcs
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_breedckcs * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "CKCS breed",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-4, 4)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+
+### e. Plot prior predictions for breedother
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_breedother * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "Other breed",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-4, 4)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+
+
+### f. Plot prior predictions for breedpug
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_breedpug * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "Pug breed",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-4, 4)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+
+
+### g. Plot prior predictions for breedret
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_breedpug * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "Pug breed",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-4, 4)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+
+
+
+
+# MANUAL POSTERIOR PREDICTIVE DISTRIBUTION CHECKS
+NB Uses posterior_predict
+
+## 1. Posterior predictive distribition plots for a categorical predictor variable (comorbidity)
+```{r}
+# use posterior predict to simulate predictions
+ppd <- posterior_predict(model) 
+
+par(mfrow = c(2,2))
+vioplot(slgCort ~ comorbidity, data = df, main = "Observed", col = "steelblue3")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df$comorbidity, main = "PPD", col = "firebrick3")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df$comorbidity, main = "PPD", col = "firebrick3")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df$comorbidity, main = "PPD", col = "firebrick3")
+```
+
+
+## 2. Posterior predictive distribition plots for a categorical predictor variable (sex)
+```{r}
+par(mfrow = c(2,2))
+vioplot(slgCort ~ sex, data = df, main = "Observed", col = "steelblue")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df$sex, main = "PPD", col = "firebrick3")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df$sex, main = "PPD", col = "firebrick3")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df$sex, main = "PPD", col = "firebrick3")
+```
+
+
+## 3. Posterior predictive distribition plots for a categorical predictor variable with small group size
+```{r}
+par(mfrow = c(2,2))
+stripchart(slgCort ~ breed, vertical = TRUE, method = "jitter",
+           col = "steelblue3", data = df, pch = 20, main = "Observed")
+stripchart(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ breed, vertical = TRUE, method = "jitter",
+           col = "firebrick3", data = df, pch = 20, main = "PPD")
+stripchart(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ breed, vertical = TRUE, method = "jitter",
+           col = "firebrick3", data = df, pch = 20, main = "PPD")
+stripchart(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ breed, vertical = TRUE, method = "jitter",
+           col = "firebrick3", data = df, pch = 20, main = "PPD")
+```
+
+
+
+
+# ANALYSING THE POSTERIOR DISTRIBUTION
+
+## 1. plot conditional effects from model
+### a. all conditional effects
+```{r}
+plot(conditional_effects(model), ask = FALSE)
+```
+
+### a. conditional effect of comorbidity only
+```{r}
+ce <- conditional_effects(model, effects = "comorbidity")
+ce_df <- ce[[1]][c(1, 9:12)]
+
+ggplot(ce_df, aes(x=comorbidity, y=estimate__, group=1)) +
+    geom_errorbar(width=.1, aes(ymin=lower__, ymax=upper__), colour=c("#F8766D", "#00BFC4"), linewidth = 1) +
+    geom_point(shape=21, size=6, fill=c("#F8766D", "#00BFC4")) +
+   theme_bw() +
+    labs(title = "Conditional effect of comorbidity on hair cortisol") +
+         labs(y = paste0("Log Hair Cortisol (standardised)")) +
+         labs(x = paste0("Comorbidity")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey50", size = 10))
+```
+
+
+
+
+
+## 2. mcmc_plot of model
+### a.just parameters of beta variables and also sigma for comorbidity
+```{r}
+mcmc_plot(model,
+          variable = c("b_comorbidityyes",
+         "b_sAge",
+         "b_breedckcs",
+         "b_breedpug",
+         "b_breedret",
+         "b_breedother",
+         "b_sigma_comorbidityyes"))
+```
+
+
+### b. all parameters except nu
+```{r}
+mcmc_plot(model,
+          variable = c("Intercept",
+         "b_Intercept", "alpha",
+         "b_sigma_Intercept",
+         "b_comorbidityyes",
+         "b_sAge",
+         "b_sexMale",
+         "b_breedckcs",
+         "b_breedpug",
+         "b_breedret",
+         "b_breedother",
+         "b_sigma_comorbidityyes"))
+```
+
+```{r}
+model$fit
+```
+
+
+
+
+### c. Parameters versus their priors
+#### i. Intercept
+```{r}
+mcmc_plot(model,
+          variable = c("Intercept", "prior_Intercept",
+         "b_Intercept"))
+```
+
+
+
+#### ii. sigma_Intercept
+```{r}
+mcmc_plot(model,
+          variable = c("b_sigma_Intercept", "prior_Intercept_sigma"))
+```
+
+
+
+#### iii. all betas versus their priors
+```{r}
+mcmc_plot(model,
+          variable = c("b_comorbidityyes", "prior_b_comorbidityyes",
+                       "b_sAge", "prior_b_sAge",
+                       "b_sexMale", "prior_b_sexMale",
+                       "b_breedckcs", "prior_b_breedckcs",
+                       "b_breedpug", "prior_b_breedpug",
+                       "b_breedret", "prior_b_breedret",
+                       "b_breedother", "prior_b_breedother"))
+```
+
+
+##### comorbidity vs prior
+###### 1. distributional
+```{r}
+mcmc_plot(model,
+          variable = c("b_comorbidityyes", "prior_b_comorbidityyes")) +
+
+
+   theme_classic() +
+    labs(title = "Prior vs posterior distribution for comorbidity") +
+         labs(y = "") +
+         labs(x = paste0("Possible parameter values")) +
+    scale_y_discrete(labels=c("prior_b_comorbidityyes" = "Prior", "b_comorbidityyes" = "Posterior"),
+                     limits = c("prior_b_comorbidityyes", "b_comorbidityyes")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+
+```
+
+
+###### 2. density
+```{r}
+mcmc_plot(model,
+          variable = c("b_comorbidityyes", "prior_b_comorbidityyes"),
+          type = "areas") +
+
+   theme_classic() +
+    labs(title = "Prior vs posterior distribution for comorbidity") +
+         labs(y = "") +
+         labs(x = paste0("Possible parameter values")) +
+    scale_y_discrete(labels=c("prior_b_comorbidityyes" = "Prior", "b_comorbidityyes" = "Posterior"),
+                     limits = c("prior_b_comorbidityyes", "b_comorbidityyes")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+```
+
+
+
+
+#### iv. sAge
+```{r}
+mcmc_plot(model,
+          variable = c("b_sAge", "prior_b_sAge"))
+```
+
+
+#### v. sexMale
+```{r}
+mcmc_plot(model,
+          variable = c("b_sexMale", "prior_b_sexMale"))
+```
+
+#### vi. breedckcs
+```{r}
+mcmc_plot(model,
+          variable = c("b_breedckcs", "prior_b_breedckcs"))
+```
+
+
+#### v. breedpug
+```{r}
+mcmc_plot(model,
+          variable = c("b_breedpug", "prior_b_breedpug"))
+```
+
+
+
+#### vi. breedret
+```{r}
+mcmc_plot(model,
+          variable = c("b_breedret", "prior_b_breedret"))
+```
+
+
+
+#### vii. breedother
+```{r}
+mcmc_plot(model,
+          variable = c("b_breedother", "prior_b_breedother"))
+```
+
+
+
+
+
+
+
+
+
+
+## 3. plot all posterior distributions
+```{r}
+posterior <- as.matrix(model)
+mcmc_areas(posterior,
+    pars = c("b_Intercept",
+         "b_sigma_Intercept",
+         "alpha",
+         "b_comorbidityyes",
+         "b_sAge",
+         "b_sexMale",
+         "b_breedckcs",
+         "b_breedpug",
+         "b_breedret",
+         "b_breedother",
+         "b_sigma_comorbidityyes"),
+    prob = 0.75) # arbitrary threshold for shading probability mass
+```
+
+
+
+
+## 4. plot posterior distribution for comorbidity
+```{r}
+posterior <- as.matrix(model)
+mcmc_areas(posterior,
+    pars = c("b_comorbidityyes",
+             "b_sigma_comorbidityyes"),
+    prob = 0.97) +  # arbitrary threshold for shading probability mass 
+ 
+   theme_classic() +
+     labs(title = "Posterior distribution for comorbidity parameters", 
+         y = "Density distribution", 
+         x = "Possible parameter values") +
+    scale_y_discrete(labels=c("b_comorbidityyes" = "Beta", "b_sigma_comorbidityyes" = "Sigma"),
+                     limits=c("b_sigma_comorbidityyes","b_comorbidityyes")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+
+```
+
+
+ 
+## 5. Describe the posterior visually
+### a. all beta parameters
+```{r}
+# Focus on describing posterior
+hdi_range <- hdi(model, ci = c(0.65, 0.70, 0.80, 0.89, 0.95))
+plot(hdi_range, show_intercept = T)
+```
+
+
+
+### b. beta for comorbidity only
+
+```{r}
+# Focus on describing posterior
+hdi_range <- hdi(model, ci = c(0.65, 0.70, 0.80, 0.89, 0.95), parameters = "comorbidityyes")
+plot(hdi_range, show_intercept = T) +
+
+    labs(title = "Posterior distribution for comorbidity") +
+         labs(y = "Density distribution") +
+         labs(x = "Possible parameter values") +
+           theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+```
+
+
+
+
+# POSTERIOR PREDICTION
+
+## 1. posterior prediction for effect of comorbidity on Log cortisol
+(when visit = vO, breed = mix, sAge = 0 (mean), sex = Female)
+```{r}
+# create new dataframe which contains results of the 10th dog
+new_data <- rbind(df2[10,], df2[10,])
+# Now change one category to be different
+new_data$comorbidity <- c("yes", "no")
+# Visualise df to make sure it has worked
+new_data
+
+
+# Now get mean predictions from the draws of the model
+pred_means <- posterior_predict(model, newdata = new_data)
+
+
+# Compare difference in means for each breed versus mix
+difference <- pred_means[,1] - pred_means[,2]
+
+par(mfrow = c(2,2))
+
+# Examine mean of difference for comorbidity
+mean(difference)
+# View histogram of this
+dens(difference)
+# Create HPDI
+HPDI(difference, 0.97)
+
+```
+
+
+
+
+# HYPOTHESIS TESTS
+
+## 1. hypothesis test to check if mean association between cortisol and comborbidity is >0
+```{r}
+draws <- as.matrix(model)
+mean(draws[,3] >0)
+```
+
+
+## 2. check 97% credible interval of with HPDI for comorbidity from draws 
+```{r}
+HPDI(draws[,3], prob=0.97)
+```
+
+
+
+## 3. hypothesis test that the effect of comorbidity is positive
+```{r}
+hypothesis(model, "comorbidityyes >0")
+```
+
+
+
+# VISUALISING PREDICTIONS
+## 1. visualising the posterior predictions from the model
+```{r}
+# create new dataframe which contains results of all dogs
+new_data1 <- df2
+# Now change one category to be different
+new_data1$comorbidity <- c("yes")
+
+# create a second new dataframe which contains results of all dogs
+new_data2 <- df2
+# Now change one category to be different
+new_data2$comorbidity <- c("no")
+
+# Now get predictions from the draws of the models
+pred_nd1 <- posterior_predict(model, newdata = new_data1)
+pred_nd2 <- posterior_predict(model, newdata = new_data2)
+pred_diff <- pred_nd1 - pred_nd2
+pred_diff <- data.frame(pred_diff)
+
+# Create mean of differences for each column (dog) of the dataframe
+pred_diff_mean <- apply(pred_diff, 2, mean)
+# View histogram of mean differences
+hist(pred_diff_mean)
+# mean difference
+mean(pred_diff_mean)
+# Create HPDI
+HPDI(pred_diff_mean, 0.97)
+```
+
+
+## 2. make predictions of log cortisol for each dog and compare with actual data
+```{r}
+pred_slgCort <- posterior_epred(model)
+av_pred_slgCort <- colMeans(pred_slgCort)
+plot(av_pred_slgCort ~ df$slgCort)
+```
+
+
+
+
+
+
+
+
+
+# MODEL FOR COMORBIDITY WITH THE ADDITION OF SEASON
+
+##  i. model2 code
+
+model2 <- brm(slgCort ~ comorbidity + sAge + breed + sex + season + (1 | visit),
+                   family = skew_normal(),
+                   data = df)
+
+## ii. Check what priors need to be set
+```{r}
+default_prior(slgCort ~ comorbidity + sAge + breed + sex + season + (1 | visit),
+                   family = skew_normal(),
+                   data = df)
+```
+
+
+
+
+
+## 1. Set priors
+NB skip the sigma parameter as this will be determined by the model2
+```{r}
+# Set individual priors
+prior_int <- set_prior("normal(0, 1)", class = "Intercept")
+prior_b <- set_prior("normal(0, 1)", class = "b")
+prior_b_sex <- set_prior("normal(0, 1)", class = "b", coef = "sexMale")
+prior_b_co <- set_prior("normal(0.25, 1)", class = "b", coef = "comorbidityyes")
+prior_b_sAge <- set_prior("normal(0, 0.5)", class = "b", coef = "sAge")
+prior_sd <- set_prior("normal(0, 1)", class = "sd")
+prior_alpha <- set_prior("normal(4, 2)", class = "alpha")
+
+# Combine priors into list
+priors2 <- c(prior_int, prior_b, prior_b_sex, prior_b_co, prior_b_sAge, prior_sd, prior_alpha)
+```
+
+## 2. Run model2
+Increased adapt_delta >0.8 (0.999 here), as had divergent transitions
+```{r}
+set.seed(999)
+model2 <- brm(bf(slgCort ~ comorbidity + sAge + breed + sex + season + (1 | visit),
+                 sigma ~ comorbidity),
+                   family = skew_normal(),
+                   prior = priors2,
+                   data = df,
+                   control=list(adapt_delta = 0.9999, stepsize = 0.001, max_treedepth =15),
+                   iter = 8000, warmup = 2000,
+                   cores = 4,
+                   save_pars = save_pars(all =TRUE),
+                   sample_prior = TRUE)
+```
+
+
+## 3. get summary of model2
+```{r}
+summary(model2)
+```
+
+
+## 4. MCMC diagnostics
+## a. check distributions and trace plots
+```{r}
+plot(model2)
+```
+Looking for hairy caterpillars
+
+
+## b. try a trank plot as well
+```{r}
+mcmc_plot(model2, type = 'rank_overlay')
+```
+
+
+
+
+## 5. calculate 97% HPDI for comorbiity
+Usually better than the compatability intervals given in the summary
+```{r}
+draws <- as.matrix(model2)
+HPDI(draws[,3], 0.97) # 1st column is draws for comorbidity
+```
+
+
+
+# CHECKS ON model2
+
+## 1. basic check of simulations based on posterior distribution, versus the real data distribution
+checks whether actual data is similar to simulated data.
+```{r}
+pp_check(model2, ndraws = 100) 
+```
+
+
+
+## 2. check some individual draws versus observed using pp_check
+```{r}
+par(mfrow = c(1,1))
+pp_check(model2, type = "hist", ndraws = 11, binwidth = 0.25) # separate histograms of 11 MCMC draws vs actual data
+```
+
+
+## 3. other pp_check graphs
+```{r}
+pp_check(model2, type = "error_hist", ndraws = 11, , binwidth = 0.25) # separate histograms of errors for 11 draws
+pp_check(model2, type = "scatter_avg", ndraws = 100) # scatter plot
+pp_check(model2, type = "stat_2d") #  scatterplot of joint posteriors
+```
+
+
+## 4 error scatter average  plot (recommended by Buerkner)
+```{r}
+pp_check(model2, type = "error_scatter_avg")
+```
+
+
+
+## 4. pairs plot
+```{r}
+pairs(model2)
+```
+
+                             (vectorized)
+                  (flat)         b   seasonsummer                             (vectorized)
+                  (flat)         b   seasonwinter 
+
+
+# AUTOMATED PRIOR SENSITIVITY USING THE PRIOR SENSE PACKAGE
+## 1. Try automated prior sensitivity analysis using the prior sense package
+First, check the sensitivity of the prior and likelihood to power-scaling. 
+Posterior and posteriors resulting from power-scaling.
+```{r}
+powerscale_sensitivity(model2, 
+                       variable = c("b_Intercept",
+                                    "b_sAge",
+                                    "b_breedckcs", "b_breedother", "b_breedpug", "b_breedret",
+                                    "b_seasonautumn", "b_seasonsummer", "b_seasonwinter",
+                                    "b_sexMale",
+                                    "b_comorbidityyes"))
+```
+
+
+
+## 2.  Now use bayestestR package to check priors are informative
+```{r}
+check_prior(model2, effects = "all")
+```
+
+
+
+
+
+# MANUAL POSTERIOR PREDICTIVE DISTRIBUTION CHECKS
+NB Uses posterior_predict
+
+## 1. Posterior predictive distribition plots for a categorical predictor variable (comorbidity)
+```{r}
+# use posterior predict to simulate predictions
+ppd <- posterior_predict(model2) 
+
+par(mfrow = c(2,2))
+vioplot(slgCort ~ comorbidity, data = df, main = "Observed", col = "steelblue3")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df$comorbidity, main = "PPD", col = "firebrick3")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df$comorbidity, main = "PPD", col = "firebrick3")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df$comorbidity, main = "PPD", col = "firebrick3")
+```
+
+
+
+# ANALYSING THE POSTERIOR DISTRIBUTION
+
+## 1. plot conditional effects from model2
+### a. all conditional effects
+```{r}
+plot(conditional_effects(model2), ask = FALSE)
+```
+
+### a. conditional effect of comorbidity only
+```{r}
+ce <- conditional_effects(model2, effects = "comorbidity")
+ce_df <- ce[[1]][c(1, 9:13)]
+
+ggplot(ce_df, aes(x=comorbidity, y=estimate__, group=1)) +
+    geom_errorbar(width=.1, aes(ymin=lower__, ymax=upper__), colour=c("#F8766D", "#00BFC4"), linewidth = 1) +
+    geom_point(shape=21, size=6, fill=c("#F8766D", "#00BFC4")) +
+   theme_bw() +
+    labs(title = "Conditional effect of comorbidity on hair cortisol") +
+         labs(y = paste0("Log Hair Cortisol (standardised)")) +
+         labs(x = paste0("Comorbidity")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey50", size = 10))
+```
+
+
+
+
+
+## 2. mcmc_plot of model2
+### a.just parameters of beta variables and also sigma for comorbidity
+```{r}
+mcmc_plot(model2,
+          variable = c("b_Intercept",
+                       "b_sAge",
+                       "b_breedckcs", "b_breedother", "b_breedpug", "b_breedret",
+                       "b_seasonautumn", "b_seasonsummer", "b_seasonwinter",
+                       "b_sexMale",
+                        "b_comorbidityyes"))
+```
+
+
+### b. all parameters except nu
+```{r}
+mcmc_plot(model2,
+          variable = c("b_Intercept",
+                       "b_sAge",
+                       "b_breedckcs", "b_breedother", "b_breedpug", "b_breedret",
+                       "b_seasonautumn", "b_seasonsummer", "b_seasonwinter",
+                       "b_sexMale",
+                        "b_comorbidityyes"))
+```
+
+```{r}
+model2$fit
+```
+
+
+
+
+### c. Parameters versus their priors
+
+
+
+##### comorbidity vs prior
+###### 1. distributional
+```{r}
+mcmc_plot(model2,
+          variable = c("b_comorbidityyes", "prior_b_comorbidityyes")) +
+
+
+   theme_classic() +
+    labs(title = "Prior vs posterior distribution for comorbidity") +
+         labs(y = "") +
+         labs(x = paste0("Possible parameter values")) +
+    scale_y_discrete(labels=c("prior_b_comorbidityyes" = "Prior", "b_comorbidityyes" = "Posterior"),
+                     limits = c("prior_b_comorbidityyes", "b_comorbidityyes")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+
+```
+
+
+###### 2. density
+```{r}
+mcmc_plot(model2,
+          variable = c("b_comorbidityyes", "prior_b_comorbidityyes"),
+          type = "areas") +
+
+   theme_classic() +
+    labs(title = "Prior vs posterior distribution for comorbidity") +
+         labs(y = "") +
+         labs(x = paste0("Possible parameter values")) +
+    scale_y_discrete(labels=c("prior_b_comorbidityyes" = "Prior", "b_comorbidityyes" = "Posterior"),
+                     limits = c("prior_b_comorbidityyes", "b_comorbidityyes")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+```
+
+
+
+
+
+
+
+
+
+
+
+## 3. plot all posterior distributions
+```{r}
+posterior <- as.matrix(model2)
+mcmc_areas(posterior,
+    pars = c("b_Intercept",
+                       "b_sAge",
+                       "b_breedckcs", "b_breedother", "b_breedpug", "b_breedret",
+                       "b_seasonautumn", "b_seasonsummer", "b_seasonwinter",
+                       "b_sexMale",
+                        "b_comorbidityyes"),
+    prob = 0.75) # arbitrary threshold for shading probability mass
+```
+
+
+
+
+## 4. plot posterior distribution for comorbidity
+```{r}
+posterior <- as.matrix(model2)
+mcmc_areas(posterior,
+    pars = c("b_comorbidityyes",
+             "b_sigma_comorbidityyes"),
+    prob = 0.97) +  # arbitrary threshold for shading probability mass 
+ 
+   theme_classic() +
+     labs(title = "Posterior distribution for comorbidity parameters", 
+         y = "Density distribution", 
+         x = "Possible parameter values") +
+    scale_y_discrete(labels=c("b_comorbidityyes" = "Beta", "b_sigma_comorbidityyes" = "Sigma"),
+                     limits=c("b_sigma_comorbidityyes","b_comorbidityyes")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+
+```
+
+
+ 
+## 5. Describe the posterior visually
+### a. all beta parameters
+```{r}
+# Focus on describing posterior
+hdi_range <- hdi(model2, ci = c(0.65, 0.70, 0.80, 0.89, 0.95))
+plot(hdi_range, show_intercept = T)
+```
+
+
+
+### b. beta for comorbidity only
+
+```{r}
+# Focus on describing posterior
+hdi_range <- hdi(model2, ci = c(0.65, 0.70, 0.80, 0.89, 0.95), parameters = "comorbidityyes")
+plot(hdi_range, show_intercept = T) +
+
+    labs(title = "Posterior distribution for comorbidity") +
+         labs(y = "Density distribution") +
+         labs(x = "Possible parameter values") +
+           theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+```
+
+
+
+
+# POSTERIOR PREDICTION
+
+## 1. posterior prediction for effect of comorbidity on Log cortisol
+(when visit = vO, breed = mix, sAge = 0 (mean), sex = Female)
+```{r}
+# create new dataframe which contains results of the 10th dog
+new_data <- rbind(df2[10,], df2[10,])
+# Now change one category to be different
+new_data$comorbidity <- c("yes", "no")
+# Visualise df to make sure it has worked
+new_data
+
+
+# Now get mean predictions from the draws of the model2
+pred_means <- posterior_predict(model2, newdata = new_data)
+
+
+# Compare difference in means for each breed versus mix
+difference <- pred_means[,1] - pred_means[,2]
+
+par(mfrow = c(2,2))
+
+# Examine mean of difference for comorbidity
+mean(difference)
+# View histogram of this
+dens(difference)
+# Create HPDI
+HPDI(difference, 0.97)
+
+```
+
+
+
+
+# HYPOTHESIS TESTS
+
+## 1. hypothesis test to check if mean association between cortisol and comborbidity is >0
+```{r}
+draws <- as.matrix(model2)
+mean(draws[,3] >0)
+```
+
+
+## 2. check 97% credible interval of with HPDI for comorbidity from draws 
+```{r}
+HPDI(draws[,3], prob=0.97)
+```
+
+
+
+## 3. hypothesis test that the effect of comorbidity is positive
+```{r}
+hypothesis(model2, "comorbidityyes >0")
+```
+
+
+
+# VISUALISING PREDICTIONS
+## 1. visualising the posterior predictions from the model2
+```{r}
+# create new dataframe which contains results of all dogs
+new_data1 <- df2
+# Now change one category to be different
+new_data1$comorbidity <- c("yes")
+
+# create a second new dataframe which contains results of all dogs
+new_data2 <- df2
+# Now change one category to be different
+new_data2$comorbidity <- c("no")
+
+# Now get predictions from the draws of the model2s
+pred_nd1 <- posterior_predict(model2, newdata = new_data1)
+pred_nd2 <- posterior_predict(model2, newdata = new_data2)
+pred_diff <- pred_nd1 - pred_nd2
+pred_diff <- data.frame(pred_diff)
+
+# Create mean of differences for each column (dog) of the dataframe
+pred_diff_mean <- apply(pred_diff, 2, mean)
+# View histogram of mean differences
+hist(pred_diff_mean)
+# mean difference
+mean(pred_diff_mean)
+# Create HPDI
+HPDI(pred_diff_mean, 0.97)
+```
+
+
+## 2. make predictions of log cortisol for each dog and compare with actual data
+```{r}
+pred_slgCort <- posterior_epred(model2)
+av_pred_slgCort <- colMeans(pred_slgCort)
+plot(av_pred_slgCort ~ df$slgCort)
+```
+
+
+
+
+
+
+
+
+
+
+
+# MODEL FOR COMORBIDITY ALLOWING UNEQUEAL VARIANCE FOR COMORBIDITY
+Try a neutral, regularising prior for comorbidity
+
+
+##  i. Model code
+
+model3 <- brm(slgCort ~ comorbidity + sAge + breed + sex + (1 | visit),
+                   family = skew_normal(),
+                   data = df)
+
+## ii. Check what priors need to be set
+```{r}
+default_prior(slgCort ~ comorbidity + sAge + breed + sex + (1 | visit),
+                   family = skew_normal(),
+                   data = df)
+```
+
+
+
+
+
+## 1. Set priors
+NB skip the sigma parameter as this will be determined by the model
+```{r}
+# Set individual priors
+prior_int <- set_prior("normal(0, 1)", class = "Intercept")
+prior_b <- set_prior("normal(0, 1)", class = "b")
+prior_b_sex <- set_prior("normal(0, 1)", class = "b", coef = "sexMale")
+prior_b_co <- set_prior("normal(0, 1)", class = "b", coef = "comorbidityyes")
+prior_b_sAge <- set_prior("normal(0, 0.5)", class = "b", coef = "sAge")
+prior_sd <- set_prior("normal(0, 1)", class = "sd")
+prior_alpha <- set_prior("normal(4, 2)", class = "alpha")
+
+# Combine priors into list
+priors3 <- c(prior_int, prior_b, prior_b_sex, prior_b_co, prior_b_sAge, prior_sd, prior_alpha)
+```
+
+## 2. Run model
+Increased adapt_delta >0.8 (0.999 here), as had divergent transitions
+```{r}
+set.seed(999)
+model3 <- brm(bf(slgCort ~ comorbidity + sAge + breed + sex + (1 | visit),
+                 sigma ~ comorbidity),
+                   family = skew_normal(),
+                   prior = priors3,
+                   data = df,
+                   control=list(adapt_delta = 0.999999, stepsize = 0.001, max_treedepth =15),
+                   iter = 8000, warmup = 2000,
+                   cores = 4,
+                   save_pars = save_pars(all =TRUE),
+                   sample_prior = TRUE)
+```
+
+
+## 3. get summary of model3
+```{r}
+summary(model3)
+```
+
+
+## 4. MCMC diagnostics
+## a. check distriitions and trace plots
+```{r}
+plot(model3)
+```
+Looking for hairy caterpillars
+
+
+## b. try a trank plot as well
+```{r}
+mcmc_plot(model3, type = 'rank_overlay')
+```
+
+
+
+
+## 5. calculate 97% HPDI for comorbiity
+Usually better than the compatability intervals given in the summary
+```{r}
+draws <- as.matrix(model3)
+HPDI(draws[,3], 0.97) # 1st column is draws for comorbidity
+```
+
+
+
+# CHECKS ON model3
+
+## 1. basic check of simulations based on posterior distribution, versus the real data distribution
+checks whether actual data is similar to simulated data.
+```{r}
+pp_check(model3, ndraws = 100) 
+```
+
+
+
+## 2. check some individual draws versus observed using pp_check
+```{r}
+par(mfrow = c(1,1))
+pp_check(model3, type = "hist", ndraws = 11, binwidth = 0.25) # separate histograms of 11 MCMC draws vs actual data
+```
+
+
+## 3. other pp_check graphs
+```{r}
+pp_check(model3, type = "error_hist", ndraws = 11, , binwidth = 0.25) # separate histograms of errors for 11 draws
+pp_check(model3, type = "scatter_avg", ndraws = 100) # scatter plot
+pp_check(model3, type = "stat_2d") #  scatterplot of joint posteriors
+```
+
+
+## 4 error scatter average  plot (recommended by Buerkner)
+```{r}
+pp_check(model3, type = "error_scatter_avg")
+```
+
+
+
+## 4. pairs plot
+```{r}
+pairs(model3)
+```
+
+
+
+
+# AUTOMATED PRIOR SENSITIVITY USING THE PRIOR SENSE PACKAGE
+## 1. Try automated prior sensitivity analysis using the prior sense package
+First, check the sensitivity of the prior and likelihood to power-scaling. 
+Posterior and posteriors resulting from power-scaling.
+```{r}
+powerscale_sensitivity(model3, 
+                       variable = c("b_Intercept",
+                                    "b_sAge",
+                                    "b_breedckcs", "b_breedother", "b_breedpug", "b_breedret",
+                                    "b_sexMale",
+                                    "b_comorbidityyes"))
+```
+
+
+
+## 2.  Now use bayestestR package to check priors are informative
+```{r}
+check_prior(model3, effects = "all")
+```
+
+
+
+# CHECK PRIOR PREDICTION LINES FROM FINAL model3
+
+## 1. obtain draws of priors from final model3
+```{r}
+prior <- prior_draws(model3)
+prior %>% glimpse()
+```
+
+
+## 2. plot prior predictions
+### a. prior prediction lines for Age
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(-2, 2)) %>% 
+  mutate(c = Intercept + b_sAge * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  labs(x = "Age (std)",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-4, 4)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+### b. plot prior predictions comorbidity (yes)
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_comorbidityyes * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "comorbidity",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-4, 4)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+
+### c. plot prior predictions for sex (Male)
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_sexMale * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "Sex breed",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-4, 4)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+
+
+
+### d. Plot prior predictions for breedckcs
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_breedckcs * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "CKCS breed",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-4, 4)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+
+### e. Plot prior predictions for breedother
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_breedother * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "Other breed",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-4, 4)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+
+
+### f. Plot prior predictions for breedpug
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_breedpug * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "Pug breed",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-4, 4)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+
+
+### g. Plot prior predictions for breedret
+```{r}
+set.seed(5)
+
+prior %>% 
+  slice_sample(n = 50) %>% 
+  rownames_to_column("draw") %>% 
+  expand_grid(a = c(0, 1)) %>% 
+  mutate(c = Intercept + b_breedpug * a) %>% 
+  
+  ggplot(aes(x = a, y = c)) +
+  geom_line(aes(group = draw),
+            color = "firebrick", alpha = .4) +
+  geom_point(color = "firebrick", size = 2) +
+  labs(x = "Pug breed",
+       y = "log(cort) (std)") +
+  coord_cartesian(ylim = c(-4, 4)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) 
+```
+
+
+
+
+
+
+
+# MANUAL POSTERIOR PREDICTIVE DISTRIBUTION CHECKS
+NB Uses posterior_predict
+
+## 1. Posterior predictive distribition plots for a categorical predictor variable (comorbidity)
+```{r}
+# use posterior predict to simulate predictions
+ppd <- posterior_predict(model3) 
+
+par(mfrow = c(2,2))
+vioplot(slgCort ~ comorbidity, data = df, main = "Observed", col = "steelblue3")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df$comorbidity, main = "PPD", col = "firebrick3")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df$comorbidity, main = "PPD", col = "firebrick3")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df$comorbidity, main = "PPD", col = "firebrick3")
+```
+
+
+## 2. Posterior predictive distribition plots for a categorical predictor variable (sex)
+```{r}
+par(mfrow = c(2,2))
+vioplot(slgCort ~ sex, data = df, main = "Observed", col = "steelblue")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df$sex, main = "PPD", col = "firebrick3")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df$sex, main = "PPD", col = "firebrick3")
+vioplot(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ df$sex, main = "PPD", col = "firebrick3")
+```
+
+
+## 3. Posterior predictive distribition plots for a categorical predictor variable with small group size
+```{r}
+par(mfrow = c(2,2))
+stripchart(slgCort ~ breed, vertical = TRUE, method = "jitter",
+           col = "steelblue3", data = df, pch = 20, main = "Observed")
+stripchart(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ breed, vertical = TRUE, method = "jitter",
+           col = "firebrick3", data = df, pch = 20, main = "PPD")
+stripchart(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ breed, vertical = TRUE, method = "jitter",
+           col = "firebrick3", data = df, pch = 20, main = "PPD")
+stripchart(ppd[sample(seq(1, dim(ppd)[1]), 1),] ~ breed, vertical = TRUE, method = "jitter",
+           col = "firebrick3", data = df, pch = 20, main = "PPD")
+```
+
+
+
+
+# ANALYSING THE POSTERIOR DISTRIBUTION
+
+## 1. plot conditional effects from model3
+### a. all conditional effects
+```{r}
+plot(conditional_effects(model3), ask = FALSE)
+```
+
+### a. conditional effect of comorbidity only
+```{r}
+ce <- conditional_effects(model3, effects = "comorbidity")
+ce_df <- ce[[1]][c(1, 9:12)]
+
+ggplot(ce_df, aes(x=comorbidity, y=estimate__, group=1)) +
+    geom_errorbar(width=.1, aes(ymin=lower__, ymax=upper__), colour=c("#F8766D", "#00BFC4"), linewidth = 1) +
+    geom_point(shape=21, size=6, fill=c("#F8766D", "#00BFC4")) +
+   theme_bw() +
+    labs(title = "Conditional effect of comorbidity on hair cortisol") +
+         labs(y = paste0("Log Hair Cortisol (standardised)")) +
+         labs(x = paste0("Comorbidity")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey50", size = 10))
+```
+
+
+
+
+
+## 2. mcmc_plot of model3
+### a.just parameters of beta variables and also sigma for comorbidity
+```{r}
+mcmc_plot(model3,
+          variable = c("b_comorbidityyes",
+         "b_sAge",
+         "b_breedckcs",
+         "b_breedpug",
+         "b_breedret",
+         "b_breedother",
+         "b_sigma_comorbidityyes"))
+```
+
+
+### b. all parameters except nu
+```{r}
+mcmc_plot(model3,
+          variable = c("Intercept",
+         "b_Intercept", "alpha",
+         "b_sigma_Intercept",
+         "b_comorbidityyes",
+         "b_sAge",
+         "b_sexMale",
+         "b_breedckcs",
+         "b_breedpug",
+         "b_breedret",
+         "b_breedother",
+         "b_sigma_comorbidityyes"))
+```
+
+```{r}
+model3$fit
+```
+
+
+
+
+### c. Parameters versus their priors
+#### i. Intercept
+```{r}
+mcmc_plot(model3,
+          variable = c("Intercept", "prior_Intercept",
+         "b_Intercept"))
+```
+
+
+
+#### ii. sigma_Intercept
+```{r}
+mcmc_plot(model3,
+          variable = c("b_sigma_Intercept", "prior_Intercept_sigma"))
+```
+
+
+
+#### iii. all betas versus their priors
+```{r}
+mcmc_plot(model3,
+          variable = c("b_comorbidityyes", "prior_b_comorbidityyes",
+                       "b_sAge", "prior_b_sAge",
+                       "b_sexMale", "prior_b_sexMale",
+                       "b_breedckcs", "prior_b_breedckcs",
+                       "b_breedpug", "prior_b_breedpug",
+                       "b_breedret", "prior_b_breedret",
+                       "b_breedother", "prior_b_breedother"))
+```
+
+
+##### comorbidity vs prior
+###### 1. distributional
+```{r}
+mcmc_plot(model3,
+          variable = c("b_comorbidityyes", "prior_b_comorbidityyes")) +
+
+
+   theme_classic() +
+    labs(title = "Prior vs posterior distribution for comorbidity") +
+         labs(y = "") +
+         labs(x = paste0("Possible parameter values")) +
+    scale_y_discrete(labels=c("prior_b_comorbidityyes" = "Prior", "b_comorbidityyes" = "Posterior"),
+                     limits = c("prior_b_comorbidityyes", "b_comorbidityyes")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+
+```
+
+
+###### 2. density
+```{r}
+mcmc_plot(model3,
+          variable = c("b_comorbidityyes", "prior_b_comorbidityyes"),
+          type = "areas") +
+
+   theme_classic() +
+    labs(title = "Prior vs posterior distribution for comorbidity") +
+         labs(y = "") +
+         labs(x = paste0("Possible parameter values")) +
+    scale_y_discrete(labels=c("prior_b_comorbidityyes" = "Prior", "b_comorbidityyes" = "Posterior"),
+                     limits = c("prior_b_comorbidityyes", "b_comorbidityyes")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+```
+
+
+
+
+#### iv. sAge
+```{r}
+mcmc_plot(model3,
+          variable = c("b_sAge", "prior_b_sAge"))
+```
+
+
+#### v. sexMale
+```{r}
+mcmc_plot(model3,
+          variable = c("b_sexMale", "prior_b_sexMale"))
+```
+
+#### vi. breedckcs
+```{r}
+mcmc_plot(model3,
+          variable = c("b_breedckcs", "prior_b_breedckcs"))
+```
+
+
+#### v. breedpug
+```{r}
+mcmc_plot(model3,
+          variable = c("b_breedpug", "prior_b_breedpug"))
+```
+
+
+
+#### vi. breedret
+```{r}
+mcmc_plot(model3,
+          variable = c("b_breedret", "prior_b_breedret"))
+```
+
+
+
+#### vii. breedother
+```{r}
+mcmc_plot(model3,
+          variable = c("b_breedother", "prior_b_breedother"))
+```
+
+
+
+
+
+
+
+
+
+
+## 3. plot all posterior distributions
+```{r}
+posterior <- as.matrix(model3)
+mcmc_areas(posterior,
+    pars = c("b_Intercept",
+         "b_sigma_Intercept",
+         "alpha",
+         "b_comorbidityyes",
+         "b_sAge",
+         "b_sexMale",
+         "b_breedckcs",
+         "b_breedpug",
+         "b_breedret",
+         "b_breedother",
+         "b_sigma_comorbidityyes"),
+    prob = 0.75) # arbitrary threshold for shading probability mass
+```
+
+
+
+
+## 4. plot posterior distribution for comorbidity
+```{r}
+posterior <- as.matrix(model3)
+mcmc_areas(posterior,
+    pars = c("b_comorbidityyes",
+             "b_sigma_comorbidityyes"),
+    prob = 0.97) +  # arbitrary threshold for shading probability mass 
+ 
+   theme_classic() +
+     labs(title = "Posterior distribution for comorbidity parameters", 
+         y = "Density distribution", 
+         x = "Possible parameter values") +
+    scale_y_discrete(labels=c("b_comorbidityyes" = "Beta", "b_sigma_comorbidityyes" = "Sigma"),
+                     limits=c("b_sigma_comorbidityyes","b_comorbidityyes")) +
+         theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+
+```
+
+
+ 
+## 5. Describe the posterior visually
+### a. all beta parameters
+```{r}
+# Focus on describing posterior
+hdi_range <- hdi(model3, ci = c(0.65, 0.70, 0.80, 0.89, 0.95))
+plot(hdi_range, show_intercept = T)
+```
+
+
+
+### b. beta for comorbidity only
+
+```{r}
+# Focus on describing posterior
+hdi_range <- hdi(model3, ci = c(0.65, 0.70, 0.80, 0.89, 0.95), parameters = "comorbidityyes")
+plot(hdi_range, show_intercept = T) +
+
+    labs(title = "Posterior distribution for comorbidity") +
+         labs(y = "Density distribution") +
+         labs(x = "Possible parameter values") +
+           theme(axis.title.y = element_text(size=12, face="bold"), 
+               axis.title.x = element_text(size=12, face="bold"),
+               title = element_text(size=12, face="bold"),
+               plot.title = element_text(hjust = 0.5),
+               axis.text.x = element_text(color = "grey50", size = 12),
+               axis.text.y = element_text(color = "grey8",size = 12))
+```
+
+
+
+
+# POSTERIOR PREDICTION
+
+## 1. posterior prediction for effect of comorbidity on Log cortisol
+(when visit = vO, breed = mix, sAge = 0 (mean), sex = Female)
+```{r}
+# create new dataframe which contains results of the 10th dog
+new_data <- rbind(df2[10,], df2[10,])
+# Now change one category to be different
+new_data$comorbidity <- c("yes", "no")
+# Visualise df to make sure it has worked
+new_data
+
+
+# Now get mean predictions from the draws of the model3
+pred_means <- posterior_predict(model3, newdata = new_data)
+
+
+# Compare difference in means for each breed versus mix
+difference <- pred_means[,1] - pred_means[,2]
+
+par(mfrow = c(2,2))
+
+# Examine mean of difference for comorbidity
+mean(difference)
+# View histogram of this
+dens(difference)
+# Create HPDI
+HPDI(difference, 0.97)
+
+```
+
+
+
+
+# HYPOTHESIS TESTS
+
+## 1. hypothesis test to check if mean association between cortisol and comborbidity is >0
+```{r}
+draws <- as.matrix(model3)
+mean(draws[,3] >0)
+```
+
+
+## 2. check 97% credible interval of with HPDI for comorbidity from draws 
+```{r}
+HPDI(draws[,3], prob=0.97)
+```
+
+
+
+## 3. hypothesis test that the effect of comorbidity is positive
+```{r}
+hypothesis(model3, "comorbidityyes >0")
+```
+
+
+
+# VISUALISING PREDICTIONS
+## 1. visualising the posterior predictions from the model3
+```{r}
+# create new dataframe which contains results of all dogs
+new_data1 <- df2
+# Now change one category to be different
+new_data1$comorbidity <- c("yes")
+
+# create a second new dataframe which contains results of all dogs
+new_data2 <- df2
+# Now change one category to be different
+new_data2$comorbidity <- c("no")
+
+# Now get predictions from the draws of the model3s
+pred_nd1 <- posterior_predict(model3, newdata = new_data1)
+pred_nd2 <- posterior_predict(model3, newdata = new_data2)
+pred_diff <- pred_nd1 - pred_nd2
+pred_diff <- data.frame(pred_diff)
+
+# Create mean of differences for each column (dog) of the dataframe
+pred_diff_mean <- apply(pred_diff, 2, mean)
+# View histogram of mean differences
+hist(pred_diff_mean)
+# mean difference
+mean(pred_diff_mean)
+# Create HPDI
+HPDI(pred_diff_mean, 0.97)
+```
+
+
+## 2. make predictions of log cortisol for each dog and compare with actual data
+```{r}
+pred_slgCort <- posterior_epred(model3)
+av_pred_slgCort <- colMeans(pred_slgCort)
+plot(av_pred_slgCort ~ df$slgCort)
+```
+
+
+
+
+
+
+
